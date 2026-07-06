@@ -41,7 +41,7 @@ AGENT_ID = "agent-scout"
 _llm = ChatOpenAI(
     model=os.getenv("OLLAMA_MODEL", "llama3"),
     base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
-    api_key="ollama",       # Ollama ignores this; the client requires it
+    api_key=os.getenv("OLLAMA_API_KEY", "ollama"),  # Ollama ignores this; the client requires it
     temperature=0,          # deterministic = better for security reasoning
 )
 
@@ -111,8 +111,7 @@ def run_whatweb(target: str) -> str:
         return f"whatweb failed: {raw.get('raw', 'unknown error')}"
 
     if raw.get("mode") == "real":
-        raw_text = raw.get("raw", "no output")
-        return f"whatweb raw output:\n{raw_text[:2000]}"
+        return f"whatweb raw output:\n{raw.get('raw', '')[:2000]}"
 
     tech = raw.get("tech_stack", [])
     if not tech:
@@ -154,20 +153,19 @@ def run_shcheck(target: str) -> str:
     Use when the prompt mentions headers, header posture, or security configuration.
     """
     raw = TOOL_REGISTRY["shcheck"]().run(target)
+    if raw.get("mode") == "mock":
+        missing = raw.get("missing_headers", [])
+        present = raw.get("present_headers", [])
+        parts = []
+        if missing:
+            parts.append(f"Missing security headers: {', '.join(missing)}")
+        if present:
+            parts.append(f"Present headers: {', '.join(present)}")
+        return "\n".join(parts) if parts else "shcheck returned no header data."
+    # real mode
     if not _ok(raw):
         return f"shcheck failed: {raw.get('raw', 'unknown error')}"
-
-    if raw.get("mode") == "real":
-        return f"shcheck raw output:\n{raw.get('raw', '')[:2000]}"
-
-    missing = raw.get("missing_headers", [])
-    present = raw.get("present_headers", [])
-    parts = []
-    if missing:
-        parts.append(f"Missing security headers: {', '.join(missing)}")
-    if present:
-        parts.append(f"Present headers: {', '.join(present)}")
-    return "\n".join(parts) if parts else "shcheck returned no header data."
+    return f"shcheck raw output:\n{raw.get('raw', '')[:2000]}"
 
 
 @tool
@@ -290,6 +288,7 @@ Rules:
    tool output — not generic descriptions.
 5. Your final answer must address: liveness, tech stack, WAF status, and
    any notable findings (header gaps, TLS issues, exposed non-web ports).
+6. When you have run all required tools, stop calling tools and write your final answer immediately. Do not call any tool more than once.
 """
 
 
@@ -317,13 +316,14 @@ def run_react_agent(prompt: str, target: str, context: dict) -> dict:
     full_prompt = (
         f"Task: {prompt}\n"
         f"Target: {target}\n"
-        f"Upstream context from prior agents: {context_str}"
+        f"Upstream context from prior agents: {context_str}\n"
+        f"Always pass the exact target URL unchanged to every tool. Never modify, truncate, or retype the target string."
     )
 
     try:
         result = agent.invoke(
             {"messages": [("user", full_prompt)]},
-            config={"recursion_limit": 15},  # 7 tools + LLM reasoning steps
+            config={"recursion_limit": 25},  # 7 tools + LLM reasoning steps
         )
     except Exception as exc:  # noqa: BLE001
         return {
@@ -350,14 +350,58 @@ def run_react_agent(prompt: str, target: str, context: dict) -> dict:
         elif content:
             reasoning_trace.append({"type": msg_type, "content": content})
 
+    # Build intent map: tool_call_id → LLM reasoning that prompted this call
+    intent_map = {}
+    for msg in messages:
+        if type(msg).__name__ == "AIMessage" and hasattr(msg, "tool_calls") and msg.tool_calls:
+            for tc in msg.tool_calls:
+                intent_map[tc.get("id", "")] = msg.content or f"run {tc.get('name', 'tool')}"
+
     # findings: one entry per ToolMessage (tool call result)
     findings = []
     for msg in messages:
         if type(msg).__name__ == "ToolMessage":
+            output = msg.content
+            intent = intent_map.get(getattr(msg, "tool_call_id", ""), "unknown")
             findings.append({
                 "tool": getattr(msg, "name", "unknown"),
-                "output": msg.content,
+                "intent": intent,
+                "output": output,
+                "intent_satisfied": "yes" if "failed" not in output.lower() and "no output" not in output.lower() else "no",
             })
+
+    # Forced-run safety net: run any tool the LLM skipped so findings are always complete
+    called_tool_names = {f["tool"] for f in findings}
+    tool_fn_map = {t.name: t for t in TOOLS}
+    for tool_name, tool_fn in tool_fn_map.items():
+        if tool_name not in called_tool_names:
+            try:
+                output = str(tool_fn.invoke({"target": target}))
+            except Exception as exc:  # noqa: BLE001
+                output = f"{tool_name} forced-run failed: {exc}"
+            intent = f"forced run — LLM skipped {tool_name}"
+            findings.append({
+                "tool": tool_name,
+                "intent": intent,
+                "output": output,
+                "intent_satisfied": "yes" if "failed" not in output.lower() and "no output" not in output.lower() else "no",
+            })
+
+    # Synthesis: ground the final summary in all tool findings via a second LLM call
+    findings_text = "\n\n".join(
+        f"[{f['tool']}]\n{f['output']}" for f in findings
+    )
+    synthesis_prompt = (
+        f"You are Scout, a security reconnaissance agent. "
+        f"Based on the tool findings below for target {target}, write a concise "
+        f"fingerprinting summary covering: liveness, tech stack, WAF status, "
+        f"TLS posture, security headers, and open ports.\n\n{findings_text}"
+    )
+    try:
+        synthesis_result = _llm.invoke([("user", synthesis_prompt)])
+        final_content = synthesis_result.content
+    except Exception:  # noqa: BLE001
+        pass  # keep final_content from messages[-1] as fallback
 
     return {
         "agent_id": AGENT_ID,
