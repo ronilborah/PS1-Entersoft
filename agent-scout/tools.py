@@ -23,10 +23,14 @@ the `TOOL_REGISTRY['name']().run(target)` interface.
 """
 
 import os
+import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
 
+
+def _strip_ansi(text: str) -> str:
+    return re.sub(r'\x1b\[[0-9;]*[mGKHF]', '', text)
 
 def mock_mode() -> bool:
     return os.getenv("TOOL_MOCK_MODE", "true").strip().lower() == "true"
@@ -46,12 +50,11 @@ def _run_cmd(cmd: list[str], timeout: int = 60) -> tuple[bool, str]:
             cmd, capture_output=True, text=True, timeout=timeout
         )
         output = proc.stdout if proc.stdout else proc.stderr
-        return True, output.strip()
+        return True, _strip_ansi(output.strip())
     except subprocess.TimeoutExpired:
         return False, f"'{binary}' timed out after {timeout}s"
     except Exception as exc:  # noqa: BLE001
         return False, f"'{binary}' failed: {exc}"
-
 
 class BaseTool:
     name = "base"
@@ -163,7 +166,7 @@ class TestsslTool(BaseTool):
         }
 
     def real(self, target: str) -> dict:
-        ok, output = _run_cmd(["testssl.sh", "--quiet", target], timeout=180)
+        ok, output = _run_cmd(["testssl.sh", "--fast", target], timeout=60)
         return {"tool": "testssl", "target": target, "ok": ok, "raw": output, "ran_at": _now(), "mode": "real"}
 
 
