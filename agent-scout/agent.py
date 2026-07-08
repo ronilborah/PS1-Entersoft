@@ -10,17 +10,18 @@ which Scout tools are relevant, calls them, reads each tool's structured
 signal output, and reasons about what to do next. It stops when it has
 enough to write a final answer, or when it has run all relevant tools.
 
-Entry point: run_react_agent(prompt, target, context) → called by main.py.
+Entry point: run_react_agent(prompt, target, context, intent) → called by main.py.
 
 Env vars (loaded from .env):
     TOOL_MOCK_MODE    — true|false (controls tool execution, not LLM)
     OLLAMA_BASE_URL   — Ollama endpoint, default http://localhost:11434/v1
-    OLLAMA_MODEL      — model name, default llama3
+    OLLAMA_MODEL      — model name, default qwen2.5
 """
 
 import json
 import os
 
+import requests
 from dotenv import load_dotenv
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
@@ -39,7 +40,7 @@ AGENT_ID = "agent-scout"
 # ---------------------------------------------------------------------------
 
 _llm = ChatOpenAI(
-    model=os.getenv("OLLAMA_MODEL", "llama3"),
+    model=os.getenv("OLLAMA_MODEL", "qwen2.5"),
     base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
     api_key=os.getenv("OLLAMA_API_KEY", "ollama"),  # Ollama ignores this; the client requires it
     temperature=0,          # deterministic = better for security reasoning
@@ -47,40 +48,18 @@ _llm = ChatOpenAI(
 
 
 # ---------------------------------------------------------------------------
-# Helper: safely extract text from a tool result in both mock and real mode.
-#
-# Mock mode → result is a structured dict with named keys (alive, tech_stack…)
-# Real mode → result is {"ok": bool, "raw": "<CLI output text>", "mode":"real"}
-#
-# Callers use _real_text() when they need the raw text string, and
-# _safe_get() when they need a specific field that exists in mock mode only.
+# Helpers
 # ---------------------------------------------------------------------------
-
-def _safe_get(result: dict, key: str, fallback: str = "unknown") -> str:
-    """Return a field from result, or fallback gracefully in real mode."""
-    value = result.get(key)
-    if value is not None:
-        return str(value)
-    # real mode: the data is in .raw, not in named fields
-    if result.get("mode") == "real":
-        raw_text = result.get("raw", "")
-        if raw_text:
-            return f"(real mode — see raw output: {raw_text[:300]})"
-    return fallback
-
 
 def _ok(result: dict) -> bool:
     """Return True if the tool ran without error, in either mode."""
     if result.get("mode") == "mock":
-        return True  # mock never fails structurally
+        return True
     return bool(result.get("ok"))
 
 
 # ---------------------------------------------------------------------------
 # @tool wrappers — one per Scout allowlist entry
-#
-# The docstring is what the LLM reads to decide whether to call this tool.
-# Keep it specific: what the tool detects and when to use it.
 # ---------------------------------------------------------------------------
 
 @tool
@@ -109,10 +88,11 @@ def run_whatweb(target: str) -> str:
     raw = TOOL_REGISTRY["whatweb"]().run(target)
     if not _ok(raw):
         return f"whatweb failed: {raw.get('raw', 'unknown error')}"
-
     if raw.get("mode") == "real":
-        return f"whatweb raw output:\n{raw.get('raw', '')[:2000]}"
-
+        output = raw.get("raw", "")
+        if not output.strip():
+            return "whatweb returned no output — target may have blocked the request or timed out."
+        return f"whatweb raw output:\n{output[:2000]}"
     tech = raw.get("tech_stack", [])
     if not tech:
         return "whatweb found no identifiable technologies."
@@ -123,49 +103,69 @@ def run_whatweb(target: str) -> str:
 def run_wafw00f(target: str) -> str:
     """
     Run wafw00f to detect whether a Web Application Firewall (WAF) is
-    protecting the target, and which vendor (Cloudflare, Akamai, AWS WAF,
-    ModSecurity, F5, etc.). WAF presence affects which attack techniques
-    are viable in later pipeline phases.
-    Use when the prompt mentions WAF, firewall, or protection layer.
+    protecting the target, and if so, which vendor (Cloudflare, Akamai,
+    AWS WAF, ModSecurity, etc.). WAF presence affects which attack
+    techniques are viable in later phases.
+    Use when the prompt mentions WAF, firewall, or protection.
     """
     raw = TOOL_REGISTRY["wafw00f"]().run(target)
     if not _ok(raw):
         return f"wafw00f failed: {raw.get('raw', 'unknown error')}"
-
     if raw.get("mode") == "real":
-        return f"wafw00f raw output:\n{raw.get('raw', '')[:2000]}"
-
+        output = raw.get("raw", "")
+        if "No WAF detected" in output:
+            return "WAF detected: False\nWAF name: none\nConfidence: n/a"
+        for line in output.splitlines():
+            if "is behind" in line or "identified" in line.lower():
+                return f"WAF detected: True\nWAF name: {line.strip()}\nConfidence: firm"
+        return f"WAF detected: unknown\nRaw output:\n{output[:2000]}"
     detected = raw.get("waf_detected", False)
     waf_name = raw.get("waf_name", "none")
     confidence = raw.get("confidence", "n/a")
     if detected:
-        return f"WAF detected: {waf_name} (confidence: {confidence})"
-    return "No WAF detected."
+        return f"WAF detected: True\nWAF name: {waf_name}\nConfidence: {confidence}"
+    return "WAF detected: False\nWAF name: none\nConfidence: n/a"
 
 
 @tool
 def run_shcheck(target: str) -> str:
     """
-    Run shcheck to audit HTTP security response headers. Checks for presence
-    or absence of: Content-Security-Policy, Strict-Transport-Security,
-    X-Frame-Options, X-Content-Type-Options, Permissions-Policy.
+    Audit HTTP security response headers. Checks for presence or absence of:
+    Content-Security-Policy, Strict-Transport-Security, X-Frame-Options,
+    X-Content-Type-Options, Referrer-Policy, Permissions-Policy.
     Missing headers are a misconfiguration finding (signal: missing_security_headers).
     Use when the prompt mentions headers, header posture, or security configuration.
     """
-    raw = TOOL_REGISTRY["shcheck"]().run(target)
-    if raw.get("mode") == "mock":
-        missing = raw.get("missing_headers", [])
-        present = raw.get("present_headers", [])
-        parts = []
-        if missing:
-            parts.append(f"Missing security headers: {', '.join(missing)}")
-        if present:
-            parts.append(f"Present headers: {', '.join(present)}")
-        return "\n".join(parts) if parts else "shcheck returned no header data."
-    # real mode
-    if not _ok(raw):
-        return f"shcheck failed: {raw.get('raw', 'unknown error')}"
-    return f"shcheck raw output:\n{raw.get('raw', '')[:2000]}"
+    security_headers = [
+        "Content-Security-Policy",
+        "Strict-Transport-Security",
+        "X-Frame-Options",
+        "X-Content-Type-Options",
+        "Referrer-Policy",
+        "Permissions-Policy",
+    ]
+    try:
+        resp = requests.get(target, timeout=10, verify=True, allow_redirects=True)
+    except requests.exceptions.SSLError:
+        try:
+            resp = requests.get(target, timeout=10, verify=False, allow_redirects=True)
+        except Exception as exc:
+            return f"shcheck failed: {exc}"
+    except Exception as exc:
+        return f"shcheck failed: {exc}"
+
+    present = [h for h in security_headers if h in resp.headers]
+    missing = [h for h in security_headers if h not in resp.headers]
+
+    parts = [f"HTTP status: {resp.status_code}"]
+    if present:
+        parts.append(f"Present headers: {', '.join(present)}")
+    if missing:
+        parts.append(f"Missing security headers: {', '.join(missing)}")
+    server_hdr = resp.headers.get("Server")
+    if server_hdr:
+        parts.append(f"Server header: {server_hdr}")
+    return "\n".join(parts)
 
 
 @tool
@@ -177,13 +177,19 @@ def run_testssl(target: str) -> str:
     (BEAST, POODLE, CRIME, ROBOT, Heartbleed).
     Use when the prompt mentions TLS, SSL, certificate, HTTPS, or cipher.
     """
+    if target.startswith("http://"):
+        return "TLS test skipped: target uses HTTP, not HTTPS. No TLS posture to assess."
     raw = TOOL_REGISTRY["testssl"]().run(target)
     if not _ok(raw):
-        return f"testssl failed: {raw.get('raw', 'unknown error')}"
-
+        err = raw.get("raw", "unknown error")
+        if "timed out" in err:
+            return "TLS scan inconclusive — target did not respond within timeout. Manual testssl run recommended."
+        return f"testssl failed: {err}"
     if raw.get("mode") == "real":
-        return f"testssl raw output:\n{raw.get('raw', '')[:3000]}"
-
+        output = raw.get("raw", "")
+        if not output.strip():
+            return "testssl returned no output — binary may have exited silently."
+        return f"testssl raw output:\n{output[:3000]}"
     tls_vers = raw.get("tls_versions", [])
     weak = raw.get("weak_protocols_found", "unknown")
     expiry = raw.get("cert_expiry_days", "unknown")
@@ -206,10 +212,8 @@ def run_nmap(target: str) -> str:
     raw = TOOL_REGISTRY["nmap"]().run(target)
     if not _ok(raw):
         return f"nmap failed: {raw.get('raw', 'unknown error')}"
-
     if raw.get("mode") == "real":
         return f"nmap raw output:\n{raw.get('raw', '')[:2000]}"
-
     ports = raw.get("open_ports", [])
     if not ports:
         return "nmap found no open ports in the top-100 scan."
@@ -230,14 +234,11 @@ def run_wpscan(target: str) -> str:
     raw = TOOL_REGISTRY["wpscan"]().run(target)
     if not _ok(raw):
         return f"wpscan failed: {raw.get('raw', 'unknown error')}"
-
     if raw.get("mode") == "real":
         return f"wpscan raw output:\n{raw.get('raw', '')[:3000]}"
-
     is_wp = raw.get("is_wordpress", False)
     if not is_wp:
         return "wpscan: target does not appear to be running WordPress."
-
     version = raw.get("wp_version", "unknown")
     vuln_plugins = raw.get("vulnerable_plugins", [])
     parts = [f"WordPress version: {version}"]
@@ -283,20 +284,37 @@ Rules:
 2. Only call run_wpscan if WordPress is confirmed by run_whatweb output,
    or if the prompt explicitly asks about WordPress.
 3. Do not call any tool more than once per target in a single task.
-4. When you have gathered enough information to answer the prompt fully,
-   write a clear final answer. Reference specific signals and values from
-   tool output — not generic descriptions.
-5. Your final answer must address: liveness, tech stack, WAF status, and
-   any notable findings (header gaps, TLS issues, exposed non-web ports).
-6. When you have run all required tools, stop calling tools and write your final answer immediately. Do not call any tool more than once.
+4. You will be given a list of REQUIRED tools for this scan's intent. You
+   MUST call every required tool before writing your final answer, even if
+   you believe you already have enough information — skipping a required
+   tool is a failure. The only exceptions are: run_testssl on an HTTP-only
+   (non-HTTPS) target, and run_wpscan when WordPress is not confirmed.
+5. When you have called every required tool, write a clear final answer.
+   Reference specific signals and values from tool output — not generic
+   descriptions.
+6. Your final answer must address: liveness, tech stack, WAF status,
+   security headers, TLS posture, and any notable findings (exposed
+   non-web ports, misconfigurations).
 """
+
+
+# ---------------------------------------------------------------------------
+# Required tools per intent (enforced in code, not just prompt)
+# ---------------------------------------------------------------------------
+
+REQUIRED_BY_INTENT = {
+    "fingerprint": ["run_httpx", "run_whatweb", "run_wafw00f", "run_shcheck", "run_testssl", "run_nmap"],
+    "deep":        ["run_httpx", "run_whatweb", "run_wafw00f", "run_shcheck", "run_testssl", "run_nmap"],
+    "stealth":     ["run_httpx", "run_whatweb"],
+    "wordpress":   ["run_httpx", "run_whatweb", "run_wpscan"],
+}
 
 
 # ---------------------------------------------------------------------------
 # Main entry point — called from main.py
 # ---------------------------------------------------------------------------
 
-def run_react_agent(prompt: str, target: str, context: dict) -> dict:
+def run_react_agent(prompt: str, target: str, context: dict, intent: str = "fingerprint") -> dict:
     """Run the Scout ReAct agent and return the contract-spec response JSON.
 
     Returns:
@@ -304,26 +322,34 @@ def run_react_agent(prompt: str, target: str, context: dict) -> dict:
             "agent_id": "agent-scout",
             "status":   "completed" | "failed",
             "response": {
-                "summary":         str,   # LLM final answer
+                "summary":         str,   # LLM synthesized final report
                 "findings":        list,  # per-tool raw output blocks
                 "reasoning_trace": list   # intermediate LLM steps for demo
             }
         }
     """
-    agent = create_react_agent(_llm, TOOLS, prompt=SYSTEM_PROMPT)
+    intent_guidance = {
+        "fingerprint": "REQUIRED tools for this scan: run_httpx, run_whatweb, run_wafw00f, run_shcheck, run_testssl (skip only if target is HTTP-only), run_nmap. Skip run_wpscan unless WordPress is confirmed.",
+        "deep":        "REQUIRED tools for this scan: run_httpx, run_whatweb, run_wafw00f, run_shcheck, run_testssl (skip only if target is HTTP-only), run_nmap, and run_wpscan if WordPress is detected. You must call every one of these before your final answer.",
+        "stealth":     "REQUIRED tools for this scan: run_httpx, run_whatweb only. Minimise requests. Do NOT run run_nmap, run_wafw00f, run_shcheck, run_testssl, or run_wpscan under any circumstances.",
+        "wordpress":   "REQUIRED tools for this scan: run_httpx, run_whatweb, run_wpscan. Focus on WordPress version and plugin vulnerabilities.",
+    }.get(intent, "REQUIRED tools for this scan: run_httpx, run_whatweb, run_wafw00f, run_shcheck, run_testssl (skip only if target is HTTP-only), run_nmap.")
+
+    dynamic_prompt = SYSTEM_PROMPT + f"\n\nScan intent: {intent}\nTool guidance for this intent: {intent_guidance}"
+
+    agent = create_react_agent(_llm, TOOLS, prompt=dynamic_prompt)
 
     context_str = json.dumps(context) if context else "none"
     full_prompt = (
         f"Task: {prompt}\n"
         f"Target: {target}\n"
-        f"Upstream context from prior agents: {context_str}\n"
-        f"Always pass the exact target URL unchanged to every tool. Never modify, truncate, or retype the target string."
+        f"Upstream context from prior agents: {context_str}"
     )
 
     try:
         result = agent.invoke(
             {"messages": [("user", full_prompt)]},
-            config={"recursion_limit": 25},  # 7 tools + LLM reasoning steps
+            config={"recursion_limit": 25},
         )
     except Exception as exc:  # noqa: BLE001
         return {
@@ -333,7 +359,6 @@ def run_react_agent(prompt: str, target: str, context: dict) -> dict:
         }
 
     messages = result.get("messages", [])
-    final_content = messages[-1].content if messages else "No response generated."
 
     # reasoning_trace: all intermediate steps except the final answer
     reasoning_trace = []
@@ -350,64 +375,79 @@ def run_react_agent(prompt: str, target: str, context: dict) -> dict:
         elif content:
             reasoning_trace.append({"type": msg_type, "content": content})
 
-    # Build intent map: tool_call_id → LLM reasoning that prompted this call
-    intent_map = {}
-    for msg in messages:
-        if type(msg).__name__ == "AIMessage" and hasattr(msg, "tool_calls") and msg.tool_calls:
-            for tc in msg.tool_calls:
-                intent_map[tc.get("id", "")] = msg.content or f"run {tc.get('name', 'tool')}"
-
-    # findings: one entry per ToolMessage (tool call result)
+    # findings: one entry per ToolMessage
     findings = []
     for msg in messages:
         if type(msg).__name__ == "ToolMessage":
-            output = msg.content
-            intent = intent_map.get(getattr(msg, "tool_call_id", ""), "unknown")
             findings.append({
                 "tool": getattr(msg, "name", "unknown"),
-                "intent": intent,
-                "output": output,
-                "intent_satisfied": "yes" if "failed" not in output.lower() and "no output" not in output.lower() else "no",
+                "output": msg.content,
             })
 
-    # Forced-run safety net: run any tool the LLM skipped so findings are always complete
+    # -----------------------------------------------------------------------
+    # Safety net: force-run any required tool the LLM skipped.
+    # Small local models frequently stop early — this guarantees completeness.
+    # -----------------------------------------------------------------------
+    required = REQUIRED_BY_INTENT.get(intent, REQUIRED_BY_INTENT["fingerprint"])
     called_tool_names = {f["tool"] for f in findings}
     tool_fn_map = {t.name: t for t in TOOLS}
-    for tool_name, tool_fn in tool_fn_map.items():
-        if tool_name not in called_tool_names:
-            try:
-                output = str(tool_fn.invoke({"target": target}))
-            except Exception as exc:  # noqa: BLE001
-                output = f"{tool_name} forced-run failed: {exc}"
-            intent = f"forced run — LLM skipped {tool_name}"
-            findings.append({
-                "tool": tool_name,
-                "intent": intent,
-                "output": output,
-                "intent_satisfied": "yes" if "failed" not in output.lower() and "no output" not in output.lower() else "no",
-            })
 
-    # Synthesis: ground the final summary in all tool findings via a second LLM call
+    for tool_name in required:
+        if tool_name in called_tool_names:
+            continue
+        # Legitimate skip conditions
+        if tool_name == "run_testssl" and target.startswith("http://"):
+            continue
+        if tool_name == "run_wpscan":
+            whatweb_out = next((f["output"] for f in findings if f["tool"] == "run_whatweb"), "")
+            if "wordpress" not in whatweb_out.lower():
+                continue
+        fn = tool_fn_map.get(tool_name)
+        if not fn:
+            continue
+        try:
+            output = str(fn.invoke({"target": target}))
+        except Exception as exc:  # noqa: BLE001
+            output = f"{tool_name} forced-run failed: {exc}"
+        findings.append({
+            "tool": tool_name,
+            "output": output,
+        })
+        reasoning_trace.append({
+            "type": "action",
+            "tool": tool_name,
+            "args": {"target": target},
+            "note": "forced — LLM skipped this required tool",
+        })
+
+    # -----------------------------------------------------------------------
+    # Synthesis: ask the LLM to write a proper report from all findings.
+    # This runs after the safety net so forced-tool results are included.
+    # -----------------------------------------------------------------------
     findings_text = "\n\n".join(
         f"[{f['tool']}]\n{f['output']}" for f in findings
     )
     synthesis_prompt = (
         f"You are Scout, a security reconnaissance agent. "
-        f"Based on the tool findings below for target {target}, write a concise "
-        f"fingerprinting summary covering: liveness, tech stack, WAF status, "
-        f"TLS posture, security headers, and open ports.\n\n{findings_text}"
+        f"You have completed a '{intent}' scan of {target}. "
+        f"Based on the tool findings below, write a concise recon report covering: "
+        f"liveness, tech stack, WAF status, TLS posture, security headers, open ports, "
+        f"and any notable risks or misconfigurations. "
+        f"Be specific — reference actual values from the tool output, not generic descriptions.\n\n"
+        f"{findings_text}"
     )
     try:
         synthesis_result = _llm.invoke([("user", synthesis_prompt)])
-        final_content = synthesis_result.content
+        final_summary = synthesis_result.content
     except Exception:  # noqa: BLE001
-        pass  # keep final_content from messages[-1] as fallback
+        # Fallback: use the LLM's mid-loop answer if synthesis fails
+        final_summary = messages[-1].content if messages else "No response generated."
 
     return {
         "agent_id": AGENT_ID,
         "status": "completed",
         "response": {
-            "summary": final_content,
+            "summary": final_summary,
             "findings": findings,
             "reasoning_trace": reasoning_trace,
         },
