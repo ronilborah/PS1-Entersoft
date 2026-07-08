@@ -18,17 +18,28 @@ REACT LOOP (how the LLM thinks)
 The LLM goes through this cycle until it decides it has enough to answer:
 
   Thought:     "I need to check TLS first because the prompt mentions ciphers."
+  Intent:      "Check whether weak TLS protocols are offered on this server."
   Action:      run_testssl_deep(target="https://target.com")
   Observation: {"findings": [{"id": "TLS1", "finding": "TLS 1.0 offered"}], ...}
+  Fulfilled:   True
   Thought:     "TLS 1.0 is weak. I should also check for general misconfigs."
+  Intent:      "Run general misconfiguration templates across the target."
   Action:      run_nuclei_active(target="https://target.com")
   Observation: {"findings": [], ...}
+  Fulfilled:   True
   Thought:     "Nothing else relevant. I have enough to summarise."
-  Final answer: "Target exposes TLS 1.0 (weak cipher suite). No other active
-                 misconfigs found by nuclei. Recommend disabling TLS 1.0/1.1."
+  Final answer: "Target exposes TLS 1.0 (weak cipher suite)..."
 
-This is different from planner.py, which would have picked testssl_deep from
-the word "cipher" alone and returned without reading any output at all.
+INTENT TRACKING
+---------------
+Before every tool call the LLM writes:
+  Intent: [one sentence — what specific question this tool call is trying to answer]
+  Fulfilled: [True/False — did the PREVIOUS tool call answer its intent]
+
+These are parsed from the message history and returned as intent_log in the
+response. This makes the agent's reasoning auditable and feeds into termination
+— if all intents are fulfilled the agent has been successfully answering its
+own questions.
 
 LANGGRAPH
 ---------
@@ -69,11 +80,11 @@ logger = logging.getLogger("agent-prober")
 # LLM setup — points at Ollama's OpenAI-compatible endpoint.
 # Override via env vars (set in .env or shell):
 #   OLLAMA_BASE_URL=http://localhost:11434/v1
-#   OLLAMA_MODEL=llama3
+#   OLLAMA_MODEL=qwen2.5:7b
 # ---------------------------------------------------------------------------
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
 
 # temperature=0 means the LLM always picks the most likely next token —
 # no randomness, which is what you want for a reasoning agent.
@@ -81,11 +92,9 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3")
 llm = ChatOpenAI(
     model=OLLAMA_MODEL,
     base_url=OLLAMA_BASE_URL,
-    api_key="ollama",
+    api_key=os.environ.get("OLLAMA_API_KEY", "ollama"),
     temperature=0,
 )
-
-
 # ---------------------------------------------------------------------------
 # Tool definitions for LangGraph.
 #
@@ -105,9 +114,11 @@ def _run(tool_key: str, target: str, context: dict | None = None) -> str:
     logger.info(">>> TOOL CALLED: %s | target: %s", tool_key, target)
     try:
         result = get_tool(tool_key).run(target, context or {})
+        # Compact JSON keeps the output small enough to fit in the context window.
+        # The LLM reads this as the Observation step of its ReAct cycle.
         return json.dumps({
             "signal_candidates": result.get("signal_candidates", []),
-            "findings": result.get("findings", [])[:10],
+            "findings": result.get("findings", [])[:10],  # cap at 10 findings
             "errors": result.get("errors", []),
             "mock": result.get("mock", True),
         }, indent=2)
@@ -230,10 +241,15 @@ Rules:
 - Pick tools based on what the prompt asks for AND what previous tool outputs
   reveal. Do not run tools whose output would be irrelevant.
 - Stop when you have enough to answer — do not run every tool by default.
-- After running tools, write a clear summary that mentions specific signals
-  found (e.g. "TLS 1.0 offered", "admin panel at /admin returns 302").
-  Do not write generic summaries that could apply to any target.
-- Keep tool calls to a maximum of 5 per task to avoid timeout."""
+- Keep tool calls to a maximum of 5 per task to avoid timeout.
+
+Before EVERY tool call, you must write your reasoning in this exact format:
+Thought: [what you observed from the previous tool, and what security conclusion you draw]
+Intent: [one sentence — what specific question this next tool call is trying to answer]
+Fulfilled: [True or False — did the PREVIOUS tool call answer its intent? Write N/A for the first tool]
+
+After running tools, write a clear summary that mentions specific signals
+found. Do not write generic summaries that could apply to any target."""
 
 
 # ---------------------------------------------------------------------------
@@ -251,9 +267,6 @@ def run_react_agent(prompt: str, target: str, context: dict[str, Any]) -> dict[s
     each tool's output before deciding what to do next.
     """
 
-    # Build the user-facing part of the prompt. The LLM sees this plus the
-    # system prompt above. We embed the target, the user's instruction, and
-    # any context from upstream agents (Analyst, Mapper, etc.).
     context_block = ""
     if context:
         context_block = f"\nUpstream context from previous agents:\n{json.dumps(context, indent=2)}\n"
@@ -282,26 +295,53 @@ def run_react_agent(prompt: str, target: str, context: dict[str, Any]) -> dict[s
             config={"recursion_limit": 20},
         )
 
-        # LangGraph accumulates all messages (user, tool calls, tool results,
-        # LLM responses) in result["messages"]. The last message is always the
-        # LLM's final plain-text answer once it decides it's done.
-        final_message = result["messages"][-1].content
+        # -----------------------------------------------------------------------
+        # Extract findings, signals, and intent log from the message history.
+        #
+        # LangGraph accumulates all messages in result["messages"]:
+        #   HumanMessage       — the original prompt
+        #   AIMessage          — LLM response (either a tool call or final answer)
+        #                        may contain Thought/Intent/Fulfilled lines
+        #   ToolMessage        — the output of a tool call (the Observation step)
+        #   ... repeating ...
+        #   AIMessage (final)  — plain text, no tool call — the written summary
+        #
+        # We parse Intent: and Fulfilled: lines from AIMessages, and collect
+        # findings/signals from ToolMessages.
+        # -----------------------------------------------------------------------
 
-        # Collect tool-call findings from the message history so we can
-        # include them in the structured response alongside the summary.
         findings: list[dict] = []
         signal_candidates: set[str] = set()
         tools_used: list[str] = []
+        intent_log: list[dict] = []
+
+        current_intent = "N/A"
 
         for msg in result["messages"]:
-            # ToolMessage is the "Observation" step — it contains one tool's output.
-            # We inspect the message type by class name rather than importing
-            # LangChain's internal ToolMessage class directly, which is safer
-            # across version changes.
             msg_type = type(msg).__name__
+
+            if msg_type == "AIMessage":
+                content = getattr(msg, "content", "") or ""
+                for line in content.splitlines():
+                    line = line.strip()
+                    if line.startswith("Intent:"):
+                        current_intent = line[len("Intent:"):].strip()
+                    elif line.startswith("Fulfilled:"):
+                        fulfilled_str = line[len("Fulfilled:"):].strip()
+                        if intent_log:
+                            # attach fulfilled status to the previous tool entry
+                            intent_log[-1]["fulfilled"] = fulfilled_str == "True"
+
             if msg_type == "ToolMessage":
                 tool_name = getattr(msg, "name", "unknown")
                 tools_used.append(tool_name)
+
+                intent_log.append({
+                    "tool": tool_name,
+                    "intent": current_intent,
+                    "fulfilled": None,  # filled in when next AIMessage arrives
+                })
+
                 try:
                     parsed = json.loads(msg.content)
                     for f in parsed.get("findings", []):
@@ -311,16 +351,26 @@ def run_react_agent(prompt: str, target: str, context: dict[str, Any]) -> dict[s
                 except (json.JSONDecodeError, AttributeError):
                     pass
 
+                current_intent = "N/A"
+
+        # The last tool never gets a subsequent AIMessage with Fulfilled:
+        # because the LLM writes its final answer instead.
+        # We mark it True — the agent chose to stop after it, meaning it
+        # considered that intent satisfied.
+        if intent_log and intent_log[-1]["fulfilled"] is None:
+            intent_log[-1]["fulfilled"] = True
+
         return {
             "agent_id": "agent-prober",
             "status": "completed",
             "response": {
-                "summary": final_message,
+                "summary": result["messages"][-1].content,
                 "findings": [
                     {
                         "signal_candidates": sorted(signal_candidates),
-                        "tools_used": list(dict.fromkeys(tools_used)),  # de-duped, order preserved
+                        "tools_used": list(dict.fromkeys(tools_used)),
                         "tool_errors": [],
+                        "intent_log": intent_log,
                         "details": findings,
                     }
                 ],

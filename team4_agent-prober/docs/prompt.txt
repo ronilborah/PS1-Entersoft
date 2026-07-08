@@ -1,0 +1,24 @@
+curl -s -X POST http://localhost:8004/agents/agent-prober/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"Run a complete active security scan on this target. Check if it is live and identify the tech stack. Test TLS and SSL configuration for weak protocols and cipher suites. Check for CORS misconfigurations. Fuzz for hidden directories, backup files, admin panels, and sensitive configuration files. Run general active scan templates for misconfigurations and CVEs. Check for vulnerable WordPress plugins and themes if WordPress is detected. Run a broad web server scan for dangerous files and missing security headers. Report every finding with severity and specific details.","target":"http://altoro.testfire.net","context":{"injectable_params_found":3,"routes_discovered":["/search.jsp","/bank/login.jsp"],"tech_stack":"Apache Tomcat, Java"}}' \
+  | python3 -c "
+import json, sys
+r = json.load(sys.stdin)
+print('AGENT:', r['agent_id'])
+print('STATUS:', r['status'])
+print()
+print('=== TOOLS USED (in order) ===')
+for i, t in enumerate(r['response']['findings'][0]['tools_used'], 1):
+    print(f'  {i}. {t}')
+print()
+print('=== SIGNALS FOUND ===')
+for s in r['response']['findings'][0]['signal_candidates']:
+    print(f'  - {s}')
+print()
+print('=== FINDINGS ===')
+for d in r['response']['findings'][0]['details']:
+    print(json.dumps(d, indent=2))
+    print()
+print('=== SUMMARY ===')
+print(r['response']['summary'])
+"
