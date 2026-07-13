@@ -9,14 +9,16 @@
 
 ## What agent-striker does
 
-agent-striker is a FastAPI + LangGraph ReAct security exploitation agent. It takes findings
-from the upstream Prober agent — "this URL might be SQLi injectable" — and actually runs
-exploit tools to confirm or disprove them. Because exploit tools can cause real damage, the
-agent enforces a **Human-In-The-Loop (HITL) gate**: it must ask for approval before running
-any exploit. The AI reasoning framework is **ReAct** (Reason + Act): the LLM sees the task,
-picks a tool, reads its output, reasons again, picks the next tool, and continues until it
-has enough to write a final answer. Every tool call is logged with an `intent_is_malicious`
-flag and a full `action_log` is returned in the response for auditing.
+agent-striker is a FastAPI + LangGraph ReAct agent that runs the final, active-testing stage
+of an authorized penetration-testing engagement. It takes findings from the upstream Prober
+agent — "this URL might be SQLi injectable" — and runs the appropriate security tool
+in-scope to confirm or disprove them. Because active test tools send real payloads to the
+target, the agent enforces a **Human-In-The-Loop (HITL) gate**: it must ask for approval
+before running any active test. The AI reasoning framework is **ReAct** (Reason + Act): the
+LLM sees the task, picks a tool, reads its output, reasons again, picks the next tool, and
+continues until it has enough to write a final answer. Every tool call is logged with a
+`requires_hitl` flag (does this action need prior approval, yes/no) and a full `action_log`
+is returned in the response for auditing.
 
 ---
 
