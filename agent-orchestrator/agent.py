@@ -16,8 +16,9 @@ load_dotenv()
 _llm = ChatOpenAI(
     model=os.getenv("OLLAMA_MODEL", "gpt-oss:20b"),
     base_url=os.getenv("OLLAMA_BASE_URL", "https://ollama.com/v1"),
-    api_key=os.getenv("OLLAMA_API_KEY", "ollama"),
+    api_key=os.getenv("OLLAMA_API_KEY"),
     temperature=0,
+    model_kwargs={"parallel_tool_calls": False},
 )
 
 SYSTEM_PROMPT = """You are the Obsidia recon-pipeline orchestrator. You coordinate five specialist
