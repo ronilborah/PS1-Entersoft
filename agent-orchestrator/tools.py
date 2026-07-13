@@ -20,12 +20,13 @@ def _skipped(agent_id: str, reason: str) -> str:
     return json.dumps({"error": reason, "agent": agent_id, "skipped": True})
 
 
-def _call_agent(agent_id: str, base_url: str, target: str, intent: str, context: dict) -> str:
+def _call_agent(agent_id: str, base_url: str, target: str, intent: str, context: str) -> str:
     """Call one specialist and return only its structured response payload."""
+    ctx = json.loads(context) if context else {}
     try:
         response = requests.post(
             f"{base_url.rstrip('/')}/agents/{agent_id}/tasks",
-            json={"prompt": intent, "target": target, "context": context},
+            json={"prompt": intent, "target": target, "context": ctx},
             timeout=TIMEOUT_SECONDS,
         )
         response.raise_for_status()
@@ -46,31 +47,31 @@ def _call_agent(agent_id: str, base_url: str, target: str, intent: str, context:
 
 
 @tool
-def call_scout(target: str, intent: str, context: dict = {}) -> str:
+def call_scout(target: str, intent: str, context: str = "{}") -> str:
     """Call the Scout agent to fingerprint a target: tech stack, WAF, TLS, open ports."""
     return _call_agent("agent-scout", os.getenv("SCOUT_URL", "http://localhost:8001"), target, intent, context)
 
 
 @tool
-def call_mapper(target: str, intent: str, context: dict = {}) -> str:
+def call_mapper(target: str, intent: str, context: str = "{}") -> str:
     """Call the Mapper agent to enumerate the target's routes, APIs, parameters, and attack surface."""
     return _call_agent("agent-mapper", os.getenv("MAPPER_URL", "http://localhost:8002"), target, intent, context)
 
 
 @tool
-def call_analyst(target: str, intent: str, context: dict = {}) -> str:
+def call_analyst(target: str, intent: str, context: str = "{}") -> str:
     """Call the Analyst agent to prioritize and assess potential security findings."""
     return _call_agent("agent-analyst", os.getenv("ANALYST_URL", "http://localhost:8003"), target, intent, context)
 
 
 @tool
-def call_prober(target: str, intent: str, context: dict = {}) -> str:
+def call_prober(target: str, intent: str, context: str = "{}") -> str:
     """Call the Prober agent to safely validate promising findings and collect evidence."""
     return _call_agent("agent-prober", os.getenv("PROBER_URL", "http://localhost:8004"), target, intent, context)
 
 
 @tool
-def call_striker(target: str, intent: str, context: dict = {}) -> str:
+def call_striker(target: str, intent: str, context: str = "{}") -> str:
     """Call the Striker agent to perform the final authorized exploitation or impact assessment stage."""
     return _call_agent("agent-striker", os.getenv("STRIKER_URL", "http://localhost:8005"), target, intent, context)
 
