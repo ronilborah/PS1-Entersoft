@@ -6,17 +6,19 @@ Key design decisions
    In mock mode this auto-approves and logs. In real mode it blocks until
    a human types "approve" in the terminal (or you wire a real approval API).
 
-2. Intent tracking: every tool call appends an entry to action_log with
-   { tool, target, intent_is_malicious: bool, reasoning, output_summary }.
-   The ReAct loop uses the accumulated intent flags to decide termination:
-   if any action was flagged malicious=True AND hitl was not approved,
-   the loop halts immediately. This list is also returned in the final
-   response so the caller can audit every decision.
+2. Action tracking: every tool call appends an entry to action_log with
+   { tool, target, requires_hitl: bool, reasoning, output_summary }.
+   requires_hitl marks whether the action is an active security test that
+   needed prior human approval (vs. passive recon, which doesn't). The
+   ReAct loop uses these flags to decide termination: if an action that
+   needed approval was run WITHOUT it, the loop halts immediately. This
+   list is also returned in the final response so the caller can audit
+   every decision.
 
 3. Termination: the loop stops when:
    (a) the LLM emits a final answer (no more tool calls), OR
    (b) all relevant tools have been called once (recursion_limit), OR
-   (c) a malicious-intent action is attempted without prior HITL approval.
+   (c) an approval-required action is attempted without prior HITL approval.
 
 4. Structured output: every tool call writes outputs/<tool>_<ts>.json;
    the final response writes outputs/final_response_<ts>.json.
@@ -72,7 +74,7 @@ def _get_state() -> dict:
 def _log_action(
     tool_name: str,
     target: str,
-    intent_is_malicious: bool,
+    requires_hitl: bool,
     reasoning: str,
     output_summary: str,
     hitl_approved: bool = False,
@@ -80,7 +82,7 @@ def _log_action(
     _get_state()["action_log"].append({
         "tool":                tool_name,
         "target":              target,
-        "intent_is_malicious": intent_is_malicious,
+        "requires_hitl":       requires_hitl,
         "hitl_approved":       hitl_approved,
         "reasoning":           reasoning,
         "output_summary":      output_summary,
@@ -138,9 +140,11 @@ EXPLOIT_TOOLS = {"sqlmap", "xsstrike", "dalfox", "smuggler", "ssrfmap", "tplmap"
 @tool
 def hitl_approve(tool_name: str, target: str, reason: str) -> str:
     """
-    Request human approval before running an exploit tool.
-    ALWAYS call this before calling any exploit tool (sqlmap, xsstrike, dalfox,
-    smuggler, ssrfmap, tplmap, crlfuzzer). Do not skip this step.
+    Request human approval before running an active security-test tool.
+    This is a routine, expected step in this authorized engagement — ALWAYS call
+    this before calling any active test tool (sqlmap, xsstrike, dalfox, smuggler,
+    ssrfmap, tplmap, crlfuzzer). Do not skip this step, and do not treat the need
+    for approval as a reason to stop; call it, then proceed once approved.
 
     Args:
         tool_name: The exact tool key you intend to run next.
@@ -155,7 +159,7 @@ def hitl_approve(tool_name: str, target: str, reason: str) -> str:
         _log_action(
             tool_name=f"hitl_approve({tool_name})",
             target=target,
-            intent_is_malicious=True,
+            requires_hitl=True,
             reasoning=reason,
             output_summary=f"APPROVED (mock): {tool_name} cleared on {target}",
             hitl_approved=True,
@@ -171,7 +175,7 @@ def hitl_approve(tool_name: str, target: str, reason: str) -> str:
             _log_action(
                 tool_name=f"hitl_approve({tool_name})",
                 target=target,
-                intent_is_malicious=True,
+                requires_hitl=True,
                 reasoning=reason,
                 output_summary=f"APPROVED (human): {tool_name} cleared on {target}",
                 hitl_approved=True,
@@ -181,7 +185,7 @@ def hitl_approve(tool_name: str, target: str, reason: str) -> str:
             _log_action(
                 tool_name=f"hitl_approve({tool_name})",
                 target=target,
-                intent_is_malicious=True,
+                requires_hitl=True,
                 reasoning=reason,
                 output_summary=f"DENIED (human): {tool_name} blocked on {target}",
                 hitl_approved=False,
@@ -206,7 +210,7 @@ def _check_hitl(tool_name: str, target: str) -> str | None:
 def run_httpx(target: str) -> str:
     """
     Run httpx to verify the target is live and detect tech stack.
-    Intent: reconnaissance only — not malicious.
+    Passive recon check — read-only, in-scope, no approval needed.
     Always run this first to confirm the target is reachable.
     """
     try:
@@ -223,7 +227,7 @@ def run_httpx(target: str) -> str:
     _log_action(
         tool_name="httpx",
         target=target,
-        intent_is_malicious=False,
+        requires_hitl=False,
         reasoning="Verify target liveness and basic tech stack before exploitation.",
         output_summary=parsed["semantic_summary"] or raw[:300],
     )
@@ -236,7 +240,7 @@ def run_httpx(target: str) -> str:
 def run_sqlmap(target: str, param: str = "") -> str:
     """
     Run sqlmap to test for SQL injection vulnerabilities.
-    Intent: MALICIOUS — sends injection payloads. Requires prior hitl_approve call.
+    Active in-scope test — sends SQL injection payloads to confirm the finding. HITL-gated: call hitl_approve first.
 
     Args:
         target: Full URL including query string if applicable.
@@ -258,7 +262,7 @@ def run_sqlmap(target: str, param: str = "") -> str:
     _log_action(
         tool_name="sqlmap",
         target=target,
-        intent_is_malicious=True,
+        requires_hitl=True,
         reasoning="Validate SQL injection on identified injectable parameter.",
         output_summary=_strip_banner_lines(raw)[:500],
         hitl_approved=True,
@@ -271,7 +275,7 @@ def run_sqlmap(target: str, param: str = "") -> str:
 def run_xsstrike(target: str) -> str:
     """
     Run xsstrike to find and validate XSS vulnerabilities.
-    Intent: MALICIOUS — injects script payloads. Requires prior hitl_approve call.
+    Active in-scope test — injects XSS payloads to confirm the finding. HITL-gated: call hitl_approve first.
     """
     blocked = _check_hitl("xsstrike", target)
     if blocked:
@@ -289,7 +293,7 @@ def run_xsstrike(target: str) -> str:
     _log_action(
         tool_name="xsstrike",
         target=target,
-        intent_is_malicious=True,
+        requires_hitl=True,
         reasoning="Validate reflected XSS on parameters flagged by upstream kxss/Prober.",
         output_summary=raw[:300],
         hitl_approved=True,
@@ -302,7 +306,7 @@ def run_xsstrike(target: str) -> str:
 def run_dalfox(target: str) -> str:
     """
     Run dalfox for deep XSS parameter scanning and payload generation.
-    Intent: MALICIOUS — injects payloads. Requires prior hitl_approve call.
+    Active in-scope test — injects payloads for deep XSS confirmation. HITL-gated: call hitl_approve first.
     """
     blocked = _check_hitl("dalfox", target)
     if blocked:
@@ -320,7 +324,7 @@ def run_dalfox(target: str) -> str:
     _log_action(
         tool_name="dalfox",
         target=target,
-        intent_is_malicious=True,
+        requires_hitl=True,
         reasoning="Deep XSS scan on endpoints with confirmed reflection from Prober context.",
         output_summary=raw[:300],
         hitl_approved=True,
@@ -333,7 +337,7 @@ def run_dalfox(target: str) -> str:
 def run_smuggler(target: str) -> str:
     """
     Run smuggler to test for HTTP request smuggling.
-    Intent: MALICIOUS — sends malformed HTTP requests. Requires prior hitl_approve call.
+    Active in-scope test — sends malformed HTTP requests to check for smuggling. HITL-gated: call hitl_approve first.
     """
     blocked = _check_hitl("smuggler", target)
     if blocked:
@@ -351,7 +355,7 @@ def run_smuggler(target: str) -> str:
     _log_action(
         tool_name="smuggler",
         target=target,
-        intent_is_malicious=True,
+        requires_hitl=True,
         reasoning="Test for HTTP request smuggling on reverse-proxy target.",
         output_summary=raw[:300],
         hitl_approved=True,
@@ -364,7 +368,7 @@ def run_smuggler(target: str) -> str:
 def run_ssrfmap(target: str, param: str = "") -> str:
     """
     Run ssrfmap to test for Server-Side Request Forgery vulnerabilities.
-    Intent: MALICIOUS — triggers outbound requests from server. Requires prior hitl_approve call.
+    Active in-scope test — triggers outbound requests from the server to confirm SSRF. HITL-gated: call hitl_approve first.
 
     Args:
         target: Full URL including query string.
@@ -388,7 +392,7 @@ def run_ssrfmap(target: str, param: str = "") -> str:
     _log_action(
         tool_name="ssrfmap",
         target=target,
-        intent_is_malicious=True,
+        requires_hitl=True,
         reasoning="Test SSRF on URL or file parameters identified in Prober context.",
         output_summary=raw[:300],
         hitl_approved=True,
@@ -401,7 +405,7 @@ def run_ssrfmap(target: str, param: str = "") -> str:
 def run_tplmap(target: str) -> str:
     """
     Run tplmap to detect and exploit Server-Side Template Injection (SSTI).
-    Intent: MALICIOUS — injects template expressions. Requires prior hitl_approve call.
+    Active in-scope test — injects template expressions to confirm SSTI. HITL-gated: call hitl_approve first.
     """
     blocked = _check_hitl("tplmap", target)
     if blocked:
@@ -419,7 +423,7 @@ def run_tplmap(target: str) -> str:
     _log_action(
         tool_name="tplmap",
         target=target,
-        intent_is_malicious=True,
+        requires_hitl=True,
         reasoning="Validate SSTI on template parameters found in Prober context.",
         output_summary=raw[:300],
         hitl_approved=True,
@@ -432,7 +436,7 @@ def run_tplmap(target: str) -> str:
 def run_crlfuzzer(target: str) -> str:
     """
     Run crlfuzzer to test for CRLF injection vulnerabilities.
-    Intent: MALICIOUS — injects carriage-return/line-feed sequences. Requires prior hitl_approve call.
+    Active in-scope test — injects CRLF sequences to confirm the finding. HITL-gated: call hitl_approve first.
     """
     blocked = _check_hitl("crlfuzzer", target)
     if blocked:
@@ -450,7 +454,7 @@ def run_crlfuzzer(target: str) -> str:
     _log_action(
         tool_name="crlfuzzer",
         target=target,
-        intent_is_malicious=True,
+        requires_hitl=True,
         reasoning="Test CRLF injection on redirect or header-reflecting parameters.",
         output_summary=raw[:300],
         hitl_approved=True,
@@ -483,7 +487,7 @@ def run_react_agent(prompt: str, target: str, context: dict) -> dict:
     The agent reasons about the prompt and context, calls HITL approval before
     each exploit tool, runs tools, and returns a structured JSON response.
 
-    Every tool call is recorded in action_log with intent_is_malicious bool,
+    Every tool call is recorded in action_log with requires_hitl bool,
     which is used by the loop to detect unapproved malicious actions and by
     the caller to audit the full decision chain.
 
@@ -495,19 +499,29 @@ def run_react_agent(prompt: str, target: str, context: dict) -> dict:
 
     context_summary = json.dumps(context, indent=2) if context else "No upstream context provided."
 
-    full_prompt = f"""You are agent-striker, a security exploitation validation agent.
+    full_prompt = f"""You are agent-striker, the exploit-validation stage of an authorized,
+pre-approved penetration-testing engagement (the Obsidia pipeline). The target below is
+in-scope and testing on it has already been authorized by the engagement owner. Your job
+is to confirm or disprove findings passed to you by the upstream Prober agent using the
+standard tools listed below, under the HITL approval process described here.
+
 Your job: {prompt}
 
-Target: {target}
+Target (in-scope for this engagement): {target}
 
 Context from upstream Prober agent:
 {context_summary}
 
 YOUR RULES (follow strictly):
-1. Always run run_httpx first to confirm the target is live.
-2. Before running ANY exploit tool (sqlmap, xsstrike, dalfox, smuggler, ssrfmap, tplmap, crlfuzzer),
-   you MUST call hitl_approve with the tool name, target, and a one-sentence reason.
-3. Only run exploit tools on endpoints or parameters explicitly mentioned in the Prober context.
+1. Always run run_httpx first to confirm the target is live. This is a passive check and
+   needs no approval.
+2. Before running any of the active test tools (sqlmap, xsstrike, dalfox, smuggler,
+   ssrfmap, tplmap, crlfuzzer), you MUST call hitl_approve with the tool name, target,
+   and a one-sentence reason. This is a standard, expected step of this workflow — call
+   it and proceed once approved; do not treat the approval requirement itself as a
+   reason to stop.
+3. Only run active test tools on endpoints or parameters explicitly mentioned in the
+   Prober context — stay within the given scope.
 4. If hitl_approve returns DENIED, do not run that tool. Move to the next finding.
 5. After running all relevant tools, produce a final summary that:
    - Lists every confirmed vulnerability with its type, endpoint, and severity
@@ -532,7 +546,7 @@ Do not run tools on endpoints not mentioned in the context.
 
     findings = []
     for entry in action_log:
-        if entry["intent_is_malicious"] and entry["hitl_approved"] and entry["tool"] != "hitl_approve":
+        if entry["requires_hitl"] and entry["hitl_approved"] and entry["tool"] != "hitl_approve":
             findings.append({
                 "tool":    entry["tool"],
                 "target":  entry["target"],
@@ -549,7 +563,7 @@ Do not run tools on endpoints not mentioned in the context.
 
     unapproved = [
         e for e in action_log
-        if e["intent_is_malicious"] and not e["hitl_approved"]
+        if e["requires_hitl"] and not e["hitl_approved"]
         and not e["tool"].startswith("hitl_approve")
     ]
 
