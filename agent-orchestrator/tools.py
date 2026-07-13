@@ -22,7 +22,10 @@ def _skipped(agent_id: str, reason: str) -> str:
 
 def _call_agent(agent_id: str, base_url: str, target: str, intent: str, context: str) -> str:
     """Call one specialist and return only its structured response payload."""
-    ctx = json.loads(context) if context else {}
+    try:
+        ctx = json.loads(context) if context else {}
+    except json.JSONDecodeError:
+        ctx = {}
     try:
         response = requests.post(
             f"{base_url.rstrip('/')}/agents/{agent_id}/tasks",
