@@ -18,7 +18,6 @@ _llm = ChatOpenAI(
     base_url=os.getenv("OLLAMA_BASE_URL", "https://ollama.com/v1"),
     api_key=os.getenv("OLLAMA_API_KEY"),
     temperature=0,
-    model_kwargs={"parallel_tool_calls": False},
 )
 
 SYSTEM_PROMPT = """You are the Obsidia recon-pipeline orchestrator. You coordinate five specialist
@@ -31,6 +30,8 @@ with `skipped: true`, record that it was unavailable and continue; do not abort.
 Run every relevant pipeline stage, but never call a specialist agent more than once in
 a run. Once all relevant stages are complete, write a concise executive summary from
 all available findings. Do not reveal your chain of thought or internal tool trace.
+
+Never call more than one tool in a single step. Always wait for each tool result before deciding on the next action.
 """
 
 
