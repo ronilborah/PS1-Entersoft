@@ -27,13 +27,18 @@ you MUST pass the previous agent's complete JSON output in that tool call's `con
 argument, accumulating useful findings from earlier stages. If an agent returns JSON
 with `skipped: true`, record that it was unavailable and continue; do not abort.
 
-Striker invocation rule: Call call_striker if ANY of the following conditions are met
-based on accumulated findings: (1) Analyst found secrets, credentials, or API keys in
-client-side code; (2) Prober confirmed at least one medium or high severity finding;
-(3) Analyst or Prober flagged exposed configuration files, open redirects, or injection
-points. Do not wait for perfect Prober output before calling Striker — if Analyst
-findings alone are high severity, invoke Striker directly after Analyst. Striker
-operates in mock mode and will not cause real damage.
+Pipeline order is STRICT and must not be skipped: Scout → Mapper → Analyst → Prober →
+Striker. You MUST call call_prober before call_striker, no exceptions. Prober validates
+and confirms findings from Analyst with active (safe) tests. Striker only runs after
+Prober has returned its results. If Prober returns empty findings or an error, still
+call call_striker with whatever context is available — do not skip it. The only valid
+reason to skip an agent is if it returns skipped:true due to being unreachable.
+
+Striker invocation rule: Call call_striker after call_prober has completed, if ANY of
+the following are true: (1) Analyst found secrets, credentials, or API keys in
+client-side code; (2) Prober confirmed at least one finding of any severity; (3) Analyst
+flagged exposed configuration files, injection points, or open redirects. Striker
+operates in mock mode and will not cause real damage — it is safe to invoke.
 
 Run every relevant pipeline stage, but never call a specialist agent more than once in
 a run. Once all relevant stages are complete, write a concise executive summary from
@@ -52,6 +57,15 @@ def _structured_result(value: Any) -> dict[str, Any]:
             value = {"summary": value, "findings": []}
     if not isinstance(value, dict):
         value = {"summary": str(value), "findings": []}
+    # Handle double-encoded mapper response.
+    summary = value.get("summary", "")
+    if isinstance(summary, str) and summary.strip().startswith(("{", "[")):
+        try:
+            inner = json.loads(summary)
+            if isinstance(inner, dict):
+                value = inner
+        except json.JSONDecodeError:
+            pass
     return {
         "summary": str(value.get("summary", value.get("error", "No summary returned."))),
         "findings": value.get("findings", []) if isinstance(value.get("findings", []), list) else [],
