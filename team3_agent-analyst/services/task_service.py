@@ -80,7 +80,7 @@ class TaskService:
                                else findings[-20:]
                                )
                  decision = select_next_tool(
-                             request.prompt,
+                             f"{request.prompt}\nTarget: {target}",
                              planner_findings,
                              used_tools,
                              planner_feedback,

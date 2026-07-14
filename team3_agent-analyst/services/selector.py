@@ -36,6 +36,8 @@ ALLOWED_TOOLS = [
     "httpx",
 ]
 
+BASELINE_TOOLS = ("httpx", "nuclei_passive")
+
 # Used by Ollama so it knows what tools exist
 TOOL_DESCRIPTIONS = """
 trufflehog      - scans files for leaked secrets (AWS keys, GitHub tokens, API keys)
@@ -145,6 +147,12 @@ def _keyword_fallback(prompt: str) -> list[str]:
 
     if any(w in prompt_lower for w in ["library", "vulnerable", "outdated", "cve"]):
         selected.update(["jshole"])
+
+    if any(w in prompt_lower for w in [
+        "asp.net", "aspnet", "iis", "web server", "web application",
+        "website", "non-js", "non js", "no javascript", "http://", "https://",
+    ]):
+        selected.update(["nuclei_passive", "httpx_enrichment"])
 
     if not selected:
         logger.info("Keyword fallback found no matching tools.")
@@ -289,12 +297,16 @@ Only if you are confident that no remaining allowed tool is likely to produce me
         logger.info("Raw planner response:\n%s", raw)    
         decision = json.loads(raw)
         if decision.get("unsupported"):
-            return {
-                "unsupported": True,
-                }
+            fallback = [t for t in _keyword_fallback(prompt) if t not in used_tools]
+            if fallback:
+                return {"finish": False, "tool": fallback[0]}
+            return {"unsupported": True}
         logger.info("Cloud LLM decision: %s", decision)
 
         if decision.get("finish"):
+            for baseline_tool in BASELINE_TOOLS:
+                if baseline_tool not in used_tools:
+                    return {"finish": False, "tool": baseline_tool}
             # HARD GUARD: the system prompt already instructs the model
             # not to finish with 0 tools used, but LLMs don't reliably
             # follow every instruction every time — this enforces it in

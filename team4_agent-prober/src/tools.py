@@ -114,15 +114,16 @@ class HttpxWrapper(ToolWrapper):
     actually parses as the real tool's JSON-lines output before trusting it;
     if it can't, it reports an explicit error pointing at the collision
     instead of fabricating recon data. On a real machine, run `httpx -version`
-    and check it mentions "projectdiscovery" before trusting
-    `shutil.which('httpx')`.
+    and check it mentions "projectdiscovery" before trusting the configured
+    `HTTPX_BINARY` path.
     """
 
     tool_key = "httpx"
     family_id = "F1"
 
     def build_command(self, target: str, context: dict[str, Any]) -> list[str]:
-        return ["httpx", "-u", target, "-silent", "-json", "-status-code", "-title", "-tech-detect"]
+        binary = os.environ.get("HTTPX_BINARY", "/usr/bin/httpx")
+        return [binary, "-u", target, "-silent", "-json", "-status-code", "-title", "-tech-detect"]
 
     def parse_output(self, raw_stdout: str, raw_stderr: str, target: str) -> dict[str, Any]:
         result = {
