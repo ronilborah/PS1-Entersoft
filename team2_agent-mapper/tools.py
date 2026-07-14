@@ -460,11 +460,11 @@ class NmapServiceWrapper:
         stdout, stderr, code = run_command([
             "nmap",
             "-sV",                  # service/version detection
+            host,
             "--top-ports", "100",   # top 100 ports (faster than full scan)
             "-oJ", output_file,     # JSON output
             "-T4",                  # aggressive timing
-            host
-        ], timeout=180)
+        ], timeout=60)
 
         try:
             with open(output_file, "r") as f:

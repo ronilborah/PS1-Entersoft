@@ -75,6 +75,8 @@ go install github.com/projectdiscovery/asnmap/cmd/asnmap@latest
 # Python-based tools
 pip install dirsearch
 pip install nirjas
+# If dirsearch fails with a pkg_resources error:
+pip install setuptools --break-system-packages
 
 # jsluice
 go install github.com/BishopFox/jsluice/cmd/jsluice@latest

@@ -24,7 +24,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 MOCK_MODE = os.environ.get("TOOL_MOCK_MODE", "true").lower() == "true"
-TOOL_TIMEOUT_SECONDS = int(os.environ.get("TOOL_TIMEOUT_SECONDS", "300"))
+TOOL_TIMEOUT_SECONDS = min(int(os.environ.get("TOOL_TIMEOUT_SECONDS", "60")), 60)
 
 
 class ToolWrapper(ABC):
@@ -86,7 +86,9 @@ class ToolWrapper(ABC):
             return result
         except subprocess.TimeoutExpired:
             result = self._empty_result(target)
-            result["errors"] = [f"{self.tool_key} timed out after {TOOL_TIMEOUT_SECONDS}s"]
+            result["error"] = "Tool timed out after 60s"
+            result["timed_out"] = True
+            result["errors"] = [result["error"]]
             result["mock"] = False
             return result
         except FileNotFoundError:

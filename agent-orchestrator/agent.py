@@ -49,26 +49,43 @@ Never call more than one tool in a single step. Always wait for each tool result
 
 
 def _structured_result(value: Any) -> dict[str, Any]:
-    """Normalize tool output into the public summary/findings shape."""
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            value = {"summary": value, "findings": []}
+    """Normalize nested or encoded tool output into the public result shape."""
+    for _ in range(3):
+        if not isinstance(value, str):
+            break
+        stripped = value.strip()
+        if stripped.startswith(("{", "[", '"')):
+            try:
+                decoded = json.loads(stripped)
+                if decoded == value:
+                    break
+                value = decoded
+            except json.JSONDecodeError:
+                break
+        else:
+            break
+
     if not isinstance(value, dict):
-        value = {"summary": str(value), "findings": []}
-    # Handle double-encoded mapper response.
+        return {"summary": str(value), "findings": []}
+
     summary = value.get("summary", "")
-    if isinstance(summary, str) and summary.strip().startswith(("{", "[")):
-        try:
-            inner = json.loads(summary)
-            if isinstance(inner, dict):
-                value = inner
-        except json.JSONDecodeError:
-            pass
+    if isinstance(summary, str):
+        stripped = summary.strip()
+        if stripped.startswith("{"):
+            try:
+                inner = json.loads(stripped)
+                if isinstance(inner, dict):
+                    value = inner
+            except json.JSONDecodeError:
+                pass
+
+    findings = value.get("findings", [])
+    if not isinstance(findings, list):
+        findings = []
+
     return {
         "summary": str(value.get("summary", value.get("error", "No summary returned."))),
-        "findings": value.get("findings", []) if isinstance(value.get("findings", []), list) else [],
+        "findings": findings,
     }
 
 

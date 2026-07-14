@@ -7,7 +7,7 @@ Run:
 
 Env vars:
     TOOL_MOCK_MODE=true|false      (default: true)
-    TOOL_TIMEOUT_SECONDS=300       (per-tool subprocess timeout)
+    TOOL_TIMEOUT_SECONDS=60        (per-tool subprocess timeout)
     OLLAMA_BASE_URL=http://localhost:11434/v1
     OLLAMA_MODEL=qwen2.5:7b
     USE_REACT_AGENT=true|false     (default: true — set false to fall back to
