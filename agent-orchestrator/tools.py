@@ -13,6 +13,28 @@ load_dotenv()
 TIMEOUT_SECONDS = 300
 logger = logging.getLogger(__name__)
 
+TARGET_TRUNCATED_MESSAGE = "Target URL was truncated by LLM. The orchestrator must retry with the full original target URL."
+
+
+def _target_validation_error(target: Any) -> str | None:
+    """Return the standard error for an invalid or truncated target URL."""
+    if (
+        not isinstance(target, str)
+        or not target.strip()
+        or "…" in target
+        or "..." in target
+        or len(target.strip()) < 10
+        or not target.strip().startswith(("http://", "https://"))
+    ):
+        return json.dumps(
+            {
+                "error": "target_truncated",
+                "skipped": True,
+                "message": TARGET_TRUNCATED_MESSAGE,
+            }
+        )
+    return None
+
 
 def _skipped(agent_id: str, reason: str) -> str:
     """Log an unavailable downstream stage and return its standard tool result."""
@@ -22,6 +44,9 @@ def _skipped(agent_id: str, reason: str) -> str:
 
 def _call_agent(agent_id: str, base_url: str, target: str, intent: str, context: str) -> str:
     """Call one specialist and return only its structured response payload."""
+    target_error = _target_validation_error(target)
+    if target_error:
+        return target_error
     try:
         ctx = json.loads(context) if context else {}
     except json.JSONDecodeError:
@@ -52,30 +77,45 @@ def _call_agent(agent_id: str, base_url: str, target: str, intent: str, context:
 @tool
 def call_scout(target: str, intent: str, context: str = "{}") -> str:
     """Call the Scout agent to fingerprint a target: tech stack, WAF, TLS, open ports."""
+    target_error = _target_validation_error(target)
+    if target_error:
+        return target_error
     return _call_agent("agent-scout", os.getenv("SCOUT_URL", "http://localhost:8001"), target, intent, context)
 
 
 @tool
 def call_mapper(target: str, intent: str, context: str = "{}") -> str:
     """Call the Mapper agent to enumerate the target's routes, APIs, parameters, and attack surface."""
+    target_error = _target_validation_error(target)
+    if target_error:
+        return target_error
     return _call_agent("agent-mapper", os.getenv("MAPPER_URL", "http://localhost:8002"), target, intent, context)
 
 
 @tool
 def call_analyst(target: str, intent: str, context: str = "{}") -> str:
     """Call the Analyst agent to prioritize and assess potential security findings."""
+    target_error = _target_validation_error(target)
+    if target_error:
+        return target_error
     return _call_agent("agent-analyst", os.getenv("ANALYST_URL", "http://localhost:8003"), target, intent, context)
 
 
 @tool
 def call_prober(target: str, intent: str, context: str = "{}") -> str:
     """Call the Prober agent to safely validate promising findings and collect evidence."""
+    target_error = _target_validation_error(target)
+    if target_error:
+        return target_error
     return _call_agent("agent-prober", os.getenv("PROBER_URL", "http://localhost:8004"), target, intent, context)
 
 
 @tool
 def call_striker(target: str, intent: str, context: str = "{}") -> str:
     """Call the Striker agent to perform the final authorized exploitation or impact assessment stage."""
+    target_error = _target_validation_error(target)
+    if target_error:
+        return target_error
     return _call_agent("agent-striker", os.getenv("STRIKER_URL", "http://localhost:8005"), target, intent, context)
 
 

@@ -27,6 +27,14 @@ you MUST pass the previous agent's complete JSON output in that tool call's `con
 argument, accumulating useful findings from earlier stages. If an agent returns JSON
 with `skipped: true`, record that it was unavailable and continue; do not abort.
 
+Striker invocation rule: Call call_striker if ANY of the following conditions are met
+based on accumulated findings: (1) Analyst found secrets, credentials, or API keys in
+client-side code; (2) Prober confirmed at least one medium or high severity finding;
+(3) Analyst or Prober flagged exposed configuration files, open redirects, or injection
+points. Do not wait for perfect Prober output before calling Striker — if Analyst
+findings alone are high severity, invoke Striker directly after Analyst. Striker
+operates in mock mode and will not cause real damage.
+
 Run every relevant pipeline stage, but never call a specialist agent more than once in
 a run. Once all relevant stages are complete, write a concise executive summary from
 all available findings. Do not reveal your chain of thought or internal tool trace.
