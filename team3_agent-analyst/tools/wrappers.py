@@ -42,7 +42,13 @@ TIMEOUT = 60  # seconds per tool call
 def _run_cmd(cmd: list[str], timeout: int = TIMEOUT) -> subprocess.CompletedProcess:
     """Run a shell command and return the result. Never raises on bad exit code."""
     logger.info("Running: %s", " ".join(cmd))
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        stdin=subprocess.DEVNULL,
+        timeout=timeout,
+    )
 
 
 def _download(url: str) -> str | None:

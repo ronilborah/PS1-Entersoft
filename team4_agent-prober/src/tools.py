@@ -81,6 +81,7 @@ class ToolWrapper(ABC):
                 cmd,
                 capture_output=True,
                 text=True,
+                stdin=subprocess.DEVNULL,
                 timeout=timeout_seconds,
             )
             try:

@@ -54,7 +54,7 @@ class HttpxTool(BaseTool):
             raise RuntimeError("httpx-toolkit: not available in this environment — binary missing or incompatible")
         result = subprocess.run(
             ["httpx-toolkit", "-u", target, "-json", "-tech-detect", "-title", "-status-code"],
-            capture_output=True, text=True, timeout=60
+            capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60
         )
         return _strip_ansi(result.stdout or result.stderr)
 
@@ -83,7 +83,7 @@ class SqlmapTool(BaseTool):
             args.append(f"--data={param}")
         result = subprocess.run(
             args,
-            capture_output=True, text=True, timeout=240
+            capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=240
         )
         return _strip_ansi(result.stdout or result.stderr)
 
@@ -108,7 +108,7 @@ class XsstrikeTool(BaseTool):
             raise RuntimeError("xsstrike: not available in this environment — binary missing or incompatible")
         result = subprocess.run(
             ["python3", script, "-u", target, "--skip-dom"],
-            capture_output=True, text=True, timeout=120
+            capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120
         )
         return _strip_ansi(result.stdout or result.stderr)
 
@@ -136,7 +136,7 @@ class DalfoxTool(BaseTool):
             raise RuntimeError("dalfox: not available in this environment — binary missing or incompatible")
         result = subprocess.run(
             ["dalfox", "url", target],
-            capture_output=True, text=True, timeout=120
+            capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120
         )
         return _strip_ansi(result.stdout or result.stderr)
 
@@ -161,7 +161,7 @@ class SmugglerTool(BaseTool):
             raise RuntimeError("smuggler: not available in this environment — binary missing or incompatible")
         result = subprocess.run(
             ["python3", script, "-u", target],
-            capture_output=True, text=True, timeout=120
+            capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120
         )
         return _strip_ansi(result.stdout or result.stderr)
 
@@ -206,7 +206,7 @@ class SsrfmapTool(BaseTool):
             tmp.close()
             result = subprocess.run(
                 ["python3", script, "-r", tmp.name, "-p", param, "-m", "readfiles,portscan"],
-                capture_output=True, text=True, timeout=120
+                capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120
             )
             return _strip_ansi(result.stdout or result.stderr)
         finally:
@@ -237,7 +237,7 @@ class TplmapTool(BaseTool):
             raise RuntimeError("tplmap: not available in this environment — binary missing or incompatible")
         result = subprocess.run(
             ["python3", script, "-u", target, "-s"],
-            capture_output=True, text=True, timeout=120
+            capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120
         )
         return _strip_ansi(result.stdout or result.stderr)
 
@@ -263,7 +263,7 @@ class CrlfuzzerTool(BaseTool):
             raise RuntimeError("crlfuzzer: not available in this environment — binary missing or incompatible")
         result = subprocess.run(
             ["crlfuzz", "-u", target],
-            capture_output=True, text=True, timeout=60
+            capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60
         )
         return _strip_ansi(result.stdout or result.stderr)
 

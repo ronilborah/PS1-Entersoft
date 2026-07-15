@@ -47,7 +47,11 @@ def _run_cmd(cmd: list[str], timeout: int = 60) -> tuple[bool, str]:
         return False, f"binary '{binary}' not found on PATH"
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout
+            cmd,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=timeout,
         )
         output = proc.stdout if proc.stdout else proc.stderr
         return True, _strip_ansi(output.strip())

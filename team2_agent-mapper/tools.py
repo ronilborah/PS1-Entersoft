@@ -33,6 +33,7 @@ def run_command(cmd: list, timeout: int = 25) -> tuple[str, str, int]:
             cmd,
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,
             timeout=timeout
         )
         return result.stdout, result.stderr, result.returncode
