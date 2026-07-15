@@ -22,11 +22,12 @@ def extract_hostname(target: str) -> str:
     return parsed.hostname or target
 
 
-def run_command(cmd: list, timeout: int = 60) -> tuple[str, str, int]:
+def run_command(cmd: list, timeout: int = 25) -> tuple[str, str, int]:
     """
     Runs a shell command, returns (stdout, stderr, returncode).
     Handles timeouts and crashes gracefully.
     """
+    timeout = min(timeout, 25)
     try:
         result = subprocess.run(
             cmd,
@@ -75,7 +76,7 @@ class HttpxWrapper:
             "-status-code",
             "-content-length",
             "-web-server"
-        ], timeout=30)
+        ], timeout=25)
 
         if code != 0 or not stdout.strip():
             return {"live": False, "error": stderr, "url": target}
@@ -116,7 +117,7 @@ class NaabuWrapper:
             "-json",
             "-silent",
             "-top-ports", "1000"  # scan top 1000 common ports
-        ], timeout=120)
+        ], timeout=25)
 
         if code != 0 or not stdout.strip():
             return {"host": host, "open_ports": [], "error": stderr}
@@ -167,7 +168,7 @@ class KatanaWrapper:
             "-depth", "3",       # crawl 3 levels deep
             "-js-crawl",         # also crawl JS files
             "-no-scope-check"
-        ], timeout=120)
+        ], timeout=25)
 
         if code != 0 or not stdout.strip():
             return {"target": target, "urls": [], "error": stderr}
@@ -212,7 +213,7 @@ class GauWrapper:
             "--providers", "wayback,otx,commoncrawl,urlscan",
             "--subs",           # include subdomains
             host
-        ], timeout=120)
+        ], timeout=25)
 
         if code != 0 or not stdout.strip():
             return {"target": target, "urls": [], "error": stderr}
@@ -242,7 +243,7 @@ class WaybackurlsWrapper:
         host = extract_hostname(target)
         stdout, stderr, code = run_command(
             ["waybackurls", host],
-            timeout=60
+            timeout=25
         )
 
         if code != 0 or not stdout.strip():
@@ -280,7 +281,7 @@ class DirsearchWrapper:
             "-o", output_file,
             "--timeout", "10",
             "-t", "20"                  # 20 threads
-        ], timeout=180)
+        ], timeout=25)
 
         # dirsearch writes to file rather than stdout
         try:
@@ -322,7 +323,7 @@ class JsluiceWrapper:
             "-u", target,
             "-silent",
             "-extension-match", "js"    # only JS files
-        ], timeout=60)
+        ], timeout=25)
 
         js_urls = [line.strip() for line in stdout.splitlines() if line.strip().endswith(".js")]
 
@@ -335,7 +336,7 @@ class JsluiceWrapper:
         for js_url in js_urls[:10]:     # cap at 10 JS files to avoid timeout
             js_stdout, _, js_code = run_command(
                 ["jsluice", "urls", js_url],
-                timeout=30
+                timeout=25
             )
             for line in js_stdout.splitlines():
                 try:
@@ -377,7 +378,7 @@ class NirjasWrapper:
         stdout, stderr, code = run_command([
             "nirjas",
             "-u", target
-        ], timeout=60)
+        ], timeout=25)
 
         if code != 0 or not stdout.strip():
             return {"target": target, "comments": [], "error": stderr}
@@ -414,7 +415,7 @@ class SourceMapsWrapper:
             "-u", target,
             "-silent",
             "-extension-match", "js"
-        ], timeout=60)
+        ], timeout=25)
 
         js_urls = [line.strip() for line in stdout.splitlines() if ".js" in line]
         map_urls = [url + ".map" for url in js_urls]
@@ -427,7 +428,7 @@ class SourceMapsWrapper:
                 "-silent",
                 "-status-code",
                 "-mc", "200"    # only report 200 OK
-            ], timeout=15)
+            ], timeout=25)
             if probe_stdout.strip():
                 found_maps.append(map_url)
 
@@ -464,7 +465,7 @@ class NmapServiceWrapper:
             "--top-ports", "100",   # top 100 ports (faster than full scan)
             "-oJ", output_file,     # JSON output
             "-T4",                  # aggressive timing
-        ], timeout=60)
+        ], timeout=25)
 
         try:
             with open(output_file, "r") as f:

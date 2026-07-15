@@ -24,7 +24,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 MOCK_MODE = os.environ.get("TOOL_MOCK_MODE", "true").lower() == "true"
-TOOL_TIMEOUT_SECONDS = min(int(os.environ.get("TOOL_TIMEOUT_SECONDS", "60")), 60)
+TOOL_TIMEOUT_SECONDS = min(int(os.environ.get("TOOL_TIMEOUT_SECONDS", "25")), 25)
 
 
 class ToolWrapper(ABC):
