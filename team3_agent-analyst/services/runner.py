@@ -3,8 +3,8 @@ runner.py — Person B owns this file.
 
 Executes the selected tools and collects all their findings.
 
-Picks between mock mode (TOOL_MOCK_MODE=true, default) and
-real mode (TOOL_MOCK_MODE=false, needs Kali binaries installed).
+Picks between mock mode (TOOL_MOCK_MODE=true) and
+real mode (TOOL_MOCK_MODE=false, default; needs Kali binaries installed).
 
 Each tool is called for every surface item (JS file or endpoint)
 that came from the Mapper context. If no surface was passed:
@@ -35,10 +35,13 @@ import urllib.request
 
 from tools.mock_tools import MOCK_TOOL_MAP
 from tools.wrappers import REAL_TOOL_MAP
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger("agent-analyst.runner")
 
-MOCK_MODE = os.getenv("TOOL_MOCK_MODE", "true").lower() == "true"
+MOCK_MODE = os.getenv("TOOL_MOCK_MODE", "false").lower() == "true"
 
 ALLOWED_TOOLS = [
     "httpx", "trufflehog", "secretfinder", "linkfinder",
