@@ -15,6 +15,22 @@ from services.summarizer import summarize_findings
 logger = logging.getLogger("agent-analyst.aggregator")
 
 
+def _deduplicate_findings(findings: list[dict]) -> list[dict]:
+    """Keep the first finding for each tool/title/location combination."""
+    unique: list[dict] = []
+    seen: set[tuple[object, object, object]] = set()
+    for finding in findings:
+        if not isinstance(finding, dict):
+            unique.append(finding)
+            continue
+        key = (finding.get("tool"), finding.get("title"), finding.get("location"))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(finding)
+    return unique
+
+
 def aggregate(findings: list[dict], context_data: dict) -> dict:
     """
     Build the final response dict from a flat list of findings.
@@ -46,6 +62,7 @@ def aggregate(findings: list[dict], context_data: dict) -> dict:
         parts.append("no issues found during passive analysis")
     """
 
+    findings = _deduplicate_findings(findings)
     summary = summarize_findings(findings, context_data)
     logger.info("Analyst Summary:\n%s", summary)
 
@@ -54,4 +71,3 @@ def aggregate(findings: list[dict], context_data: dict) -> dict:
         "findings": findings,
     }
     
-

@@ -319,6 +319,41 @@ def synthesize_node(state: AgentState) -> dict:
     return {"messages": [response]}
 
 
+def _parse_synthesis_report(raw_output: object) -> tuple[str, list]:
+    """Parse JSON report output, including repeatedly encoded model responses."""
+    value = raw_output
+    for _ in range(3):
+        if not isinstance(value, str):
+            break
+        stripped = value.strip()
+        if not stripped.startswith(("{", "[", '"')):
+            break
+        try:
+            decoded = json.loads(stripped)
+        except json.JSONDecodeError:
+            break
+        if decoded == value:
+            break
+        value = decoded
+
+    if not isinstance(value, dict):
+        return str(value), []
+
+    summary = value.get("summary", "")
+    if isinstance(summary, str) and summary.strip().startswith("{"):
+        try:
+            inner = json.loads(summary.strip())
+            if isinstance(inner, dict):
+                value = inner
+        except json.JSONDecodeError:
+            pass
+
+    findings = value.get("findings", [])
+    if not isinstance(findings, list):
+        findings = []
+    return str(value.get("summary", "No summary returned.")), findings
+
+
 # ---------------------------------------------------------------------------
 # Termination Guard
 # ---------------------------------------------------------------------------
@@ -408,13 +443,7 @@ def run_react_agent(prompt: str, target: str, context: dict) -> dict:
         final_state = GRAPH.invoke(initial_state)
         raw_output  = final_state["messages"][-1].content
 
-        try:
-            parsed   = json.loads(raw_output)
-            summary  = parsed.get("summary", raw_output)
-            findings = parsed.get("findings", [])
-        except (json.JSONDecodeError, AttributeError):
-            summary  = raw_output
-            findings = []
+        summary, findings = _parse_synthesis_report(raw_output)
 
         return {
             "agent_id": "agent-mapper",

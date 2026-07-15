@@ -95,7 +95,7 @@ class TaskService:
                                 "findings": [],
                                 },
                                 }
-                 if decision["finish"]:
+                 if decision.get("finish", False):
                       logger.info(
                            "Planner finished after %d step(s).",
                            step,

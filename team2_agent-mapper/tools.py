@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 # Read mock mode from environment variable
 MOCK_MODE = os.getenv("TOOL_MOCK_MODE", "false").lower() == "true"
+HTTPX_BINARY = os.environ.get("HTTPX_BINARY", "/usr/bin/httpx")
 
 
 def extract_hostname(target: str) -> str:
@@ -67,8 +68,9 @@ class HttpxWrapper:
             }
 
         host = extract_hostname(target)
+        httpx_binary = os.environ.get("HTTPX_BINARY", "/usr/bin/httpx")
         stdout, stderr, code = run_command([
-            "httpx",
+            httpx_binary,
             "-u", target,
             "-json",        # output as JSON
             "-silent",      # no banner

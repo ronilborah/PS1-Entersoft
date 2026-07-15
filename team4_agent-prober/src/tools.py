@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -27,6 +28,7 @@ MOCK_MODE = os.environ.get("TOOL_MOCK_MODE", "true").lower() == "true"
 TOOL_TIMEOUT_SECONDS = min(int(os.environ.get("TOOL_TIMEOUT_SECONDS", "25")), 25)
 SLOW_TOOL_TIMEOUT_SECONDS = 45
 SLOW_TOOL_KEYS = {"nuclei", "nuclei_active", "nikto", "ffuf", "wfuzz", "testssl", "testssl_deep"}
+TARGET_URL_PATTERN = re.compile(r"^https?://[a-zA-Z0-9]")
 
 
 class ToolWrapper(ABC):
@@ -62,6 +64,14 @@ class ToolWrapper(ABC):
         return result
 
     def run(self, target: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        if (
+            not isinstance(target, str)
+            or not TARGET_URL_PATTERN.match(target)
+            or target.rstrip().endswith(("?", "#", "&"))
+        ):
+            raise ValueError(
+                f"Invalid target URL {target!r}; expected an http:// or https:// URL"
+            )
         context = context or {}
         cmd = self.build_command(target, context)
         binary = cmd[0]
@@ -82,6 +92,7 @@ class ToolWrapper(ABC):
                 capture_output=True,
                 text=True,
                 stdin=subprocess.DEVNULL,
+                close_fds=True,
                 timeout=timeout_seconds,
             )
             try:
@@ -785,7 +796,7 @@ class NiktoWrapper(ToolWrapper):
 
     def build_command(self, target: str, context: dict[str, Any]) -> list[str]:
         maxtime = context.get("nikto_maxtime", "100s")
-        return ["nikto", "-h", target, "-maxtime", str(maxtime), "-nointeractive"]
+        return ["nikto", "-h", target, "-maxtime", str(maxtime), "-nointeractive", "-s"]
 
     def parse_output(self, raw_stdout: str, raw_stderr: str, target: str) -> dict[str, Any]:
         findings: list[dict[str, Any]] = []
