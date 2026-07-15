@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from langchain_core.tools import tool
 
 load_dotenv()
-TIMEOUT_SECONDS = 120
+TIMEOUT_SECONDS = 200
 logger = logging.getLogger(__name__)
 
 TARGET_TRUNCATED_MESSAGE = "Target URL was truncated by LLM. The orchestrator must retry with the full original target URL."

@@ -25,6 +25,8 @@ from typing import Any
 
 MOCK_MODE = os.environ.get("TOOL_MOCK_MODE", "true").lower() == "true"
 TOOL_TIMEOUT_SECONDS = min(int(os.environ.get("TOOL_TIMEOUT_SECONDS", "25")), 25)
+SLOW_TOOL_TIMEOUT_SECONDS = 45
+SLOW_TOOL_KEYS = {"nuclei", "nuclei_active", "nikto", "ffuf", "wfuzz", "testssl", "testssl_deep"}
 
 
 class ToolWrapper(ABC):
@@ -70,11 +72,16 @@ class ToolWrapper(ABC):
             return result
 
         try:
+            timeout_seconds = (
+                SLOW_TOOL_TIMEOUT_SECONDS
+                if self.tool_key in SLOW_TOOL_KEYS
+                else TOOL_TIMEOUT_SECONDS
+            )
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=TOOL_TIMEOUT_SECONDS,
+                timeout=timeout_seconds,
             )
             try:
                 result = self.parse_output(proc.stdout, proc.stderr, target)
@@ -86,7 +93,7 @@ class ToolWrapper(ABC):
             return result
         except subprocess.TimeoutExpired:
             result = self._empty_result(target)
-            result["error"] = "Tool timed out after 60s"
+            result["error"] = f"Tool timed out after {timeout_seconds}s"
             result["timed_out"] = True
             result["errors"] = [result["error"]]
             result["mock"] = False

@@ -27,7 +27,7 @@ def run_command(cmd: list, timeout: int = 25) -> tuple[str, str, int]:
     Runs a shell command, returns (stdout, stderr, returncode).
     Handles timeouts and crashes gracefully.
     """
-    timeout = min(timeout, 25)
+    timeout = min(timeout, 45)
     try:
         result = subprocess.run(
             cmd,
@@ -168,7 +168,7 @@ class KatanaWrapper:
             "-depth", "3",       # crawl 3 levels deep
             "-js-crawl",         # also crawl JS files
             "-no-scope-check"
-        ], timeout=25)
+        ], timeout=45)
 
         if code != 0 or not stdout.strip():
             return {"target": target, "urls": [], "error": stderr}
@@ -213,7 +213,7 @@ class GauWrapper:
             "--providers", "wayback,otx,commoncrawl,urlscan",
             "--subs",           # include subdomains
             host
-        ], timeout=25)
+        ], timeout=45)
 
         if code != 0 or not stdout.strip():
             return {"target": target, "urls": [], "error": stderr}
@@ -243,7 +243,7 @@ class WaybackurlsWrapper:
         host = extract_hostname(target)
         stdout, stderr, code = run_command(
             ["waybackurls", host],
-            timeout=25
+            timeout=45
         )
 
         if code != 0 or not stdout.strip():
@@ -281,7 +281,7 @@ class DirsearchWrapper:
             "-o", output_file,
             "--timeout", "10",
             "-t", "20"                  # 20 threads
-        ], timeout=25)
+        ], timeout=45)
 
         # dirsearch writes to file rather than stdout
         try:
@@ -323,7 +323,7 @@ class JsluiceWrapper:
             "-u", target,
             "-silent",
             "-extension-match", "js"    # only JS files
-        ], timeout=25)
+        ], timeout=45)
 
         js_urls = [line.strip() for line in stdout.splitlines() if line.strip().endswith(".js")]
 
@@ -415,7 +415,7 @@ class SourceMapsWrapper:
             "-u", target,
             "-silent",
             "-extension-match", "js"
-        ], timeout=25)
+        ], timeout=45)
 
         js_urls = [line.strip() for line in stdout.splitlines() if ".js" in line]
         map_urls = [url + ".map" for url in js_urls]
