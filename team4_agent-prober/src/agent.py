@@ -66,6 +66,7 @@ load_dotenv()
 import json
 import logging
 import os
+import re
 from typing import Any
 
 from langchain_core.tools import tool
@@ -360,14 +361,23 @@ def run_react_agent(prompt: str, target: str, context: dict[str, Any]) -> dict[s
         if intent_log and intent_log[-1]["fulfilled"] is None:
             intent_log[-1]["fulfilled"] = True
 
-        specific_endpoints = [
-            entry.get("url")
-            for entry in findings
-            if (
-                entry.get("source_tool") == "run_ffuf"
-                and entry.get("status") in (200, 301, 302, 403)
-            )
-        ]
+        specific_endpoints: list[str] = []
+        for entry in findings:
+            source_tool = entry.get("source_tool")
+            if source_tool == "run_ffuf":
+                if entry.get("status") in (200, 301, 302, 403) and entry.get("url"):
+                    specific_endpoints.append(entry["url"])
+            elif source_tool == "run_nuclei_active":
+                if entry.get("matched_at"):
+                    specific_endpoints.append(entry["matched_at"])
+            elif source_tool == "run_nikto":
+                finding = entry.get("finding")
+                if isinstance(finding, str):
+                    specific_endpoints.extend(
+                        url.rstrip(".,;:)]}")
+                        for url in re.findall(r"https?://[^\s\"'<>]+", finding)
+                    )
+        specific_endpoints = list(dict.fromkeys(specific_endpoints))
 
         return {
             "agent_id": "agent-prober",

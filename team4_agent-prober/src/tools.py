@@ -144,7 +144,7 @@ class HttpxWrapper(ToolWrapper):
     family_id = "F1"
 
     def build_command(self, target: str, context: dict[str, Any]) -> list[str]:
-        binary = os.environ.get("HTTPX_BINARY", "/usr/bin/httpx")
+        binary = os.environ.get("HTTPX_BINARY", "httpx")
         return [binary, "-u", target, "-silent", "-json", "-status-code", "-title", "-tech-detect"]
 
     def parse_output(self, raw_stdout: str, raw_stderr: str, target: str) -> dict[str, Any]:
