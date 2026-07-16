@@ -28,7 +28,7 @@ MOCK_MODE = os.environ.get("TOOL_MOCK_MODE", "true").lower() == "true"
 TOOL_TIMEOUT_SECONDS = min(int(os.environ.get("TOOL_TIMEOUT_SECONDS", "25")), 25)
 SLOW_TOOL_TIMEOUT_SECONDS = 45
 SLOW_TOOL_KEYS = {"nuclei", "nuclei_active", "nikto", "ffuf", "wfuzz", "testssl", "testssl_deep"}
-TARGET_URL_PATTERN = re.compile(r"^https?://[a-zA-Z0-9]")
+TARGET_URL_PATTERN = re.compile(r"^https?://[a-zA-Z0-9][a-zA-Z0-9\-\.]*\.[a-zA-Z]{2,}")
 
 
 class ToolWrapper(ABC):
@@ -64,10 +64,12 @@ class ToolWrapper(ABC):
         return result
 
     def run(self, target: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        hostname = target.split("://", 1)[1].split("/", 1)[0] if isinstance(target, str) and "://" in target else ""
         if (
             not isinstance(target, str)
             or not TARGET_URL_PATTERN.match(target)
             or target.rstrip().endswith(("?", "#", "&"))
+            or len(hostname) < 4
         ):
             raise ValueError(
                 f"Invalid target URL {target!r}; expected an http:// or https:// URL"
