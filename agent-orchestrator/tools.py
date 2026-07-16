@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import time
 from typing import Any
 
 import requests
@@ -51,12 +52,17 @@ def _call_agent(agent_id: str, base_url: str, target: str, intent: str, context:
         ctx = json.loads(context) if context else {}
     except json.JSONDecodeError:
         ctx = {}
+    request_url = f"{base_url.rstrip('/')}/agents/{agent_id}/tasks"
+    request_body = {"prompt": intent, "target": target, "context": ctx}
     try:
-        response = requests.post(
-            f"{base_url.rstrip('/')}/agents/{agent_id}/tasks",
-            json={"prompt": intent, "target": target, "context": ctx},
-            timeout=TIMEOUT_SECONDS,
-        )
+        response = requests.post(request_url, json=request_body, timeout=TIMEOUT_SECONDS)
+    except requests.exceptions.ReadTimeout:
+        time.sleep(10)
+        try:
+            response = requests.post(request_url, json=request_body, timeout=TIMEOUT_SECONDS)
+        except requests.RequestException as exc:
+            return _skipped(agent_id, str(exc))
+    try:
         response.raise_for_status()
         payload: dict[str, Any] = response.json()
     except requests.RequestException as exc:
@@ -71,6 +77,11 @@ def _call_agent(agent_id: str, base_url: str, target: str, intent: str, context:
     agent_response = payload.get("response")
     if not isinstance(agent_response, dict):
         return _skipped(agent_id, "downstream agent returned no response object")
+    # Truncated to prevent LLM context overflow
+    agent_response = dict(agent_response)
+    agent_response["summary"] = str(agent_response.get("summary", ""))[:1000]
+    findings = agent_response.get("findings", [])
+    agent_response["findings"] = findings[:5] if isinstance(findings, list) else []
     return json.dumps(agent_response)
 
 

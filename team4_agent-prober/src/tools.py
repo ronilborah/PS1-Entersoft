@@ -36,6 +36,7 @@ class ToolWrapper(ABC):
 
     tool_key: str = "base"
     family_id: str = "F4"
+    env_binary_override: str | None = None
 
     @abstractmethod
     def build_command(self, target: str, context: dict[str, Any]) -> list[str]:
@@ -78,8 +79,10 @@ class ToolWrapper(ABC):
         cmd = self.build_command(target, context)
         binary = cmd[0]
 
-        if isinstance(self, HttpxWrapper):
-            binary = os.environ.get("HTTPX_BINARY", "httpx")
+        binary_override_name = getattr(self, "env_binary_override", None)
+        binary_override = os.environ.get(binary_override_name) if binary_override_name else None
+        if binary_override:
+            binary = binary_override
             binary_available = os.path.isfile(binary)
         else:
             binary_available = shutil.which(binary) is not None
@@ -150,6 +153,7 @@ class HttpxWrapper(ToolWrapper):
 
     tool_key = "httpx"
     family_id = "F1"
+    env_binary_override = "HTTPX_BINARY"
 
     def build_command(self, target: str, context: dict[str, Any]) -> list[str]:
         binary = os.environ.get("HTTPX_BINARY", "httpx")

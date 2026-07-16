@@ -64,11 +64,24 @@ _state_var: contextvars.ContextVar[dict] = contextvars.ContextVar("agent_state")
 
 
 def _reset_state() -> None:
-    _state_var.set({"action_log": [], "hitl_approved": set(), "skipped": []})
+    _state_var.set({"action_log": [], "hitl_approved": set(), "skipped": [], "tools_called": set()})
 
 
 def _get_state() -> dict:
     return _state_var.get()
+
+
+def _already_called(tool_name: str, target: str) -> str | None:
+    key = (tool_name, target)
+    if key in _get_state()["tools_called"]:
+        message = f"already called {tool_name} on {target} this run"
+        print(f"[INFO] {message}")
+        return message
+    return None
+
+
+def _record_tool_call(tool_name: str, target: str) -> None:
+    _get_state()["tools_called"].add((tool_name, target))
 
 
 def _log_action(
@@ -219,8 +232,12 @@ def run_httpx(target: str) -> str:
     Passive recon check — read-only, in-scope, no approval needed.
     Always run this first to confirm the target is reachable.
     """
+    duplicate = _already_called("httpx", target)
+    if duplicate:
+        return duplicate
     try:
         raw = TOOL_REGISTRY["httpx"]().run(target)
+        _record_tool_call("httpx", target)
     except RuntimeError as exc:
         msg = f"[SKIPPED] httpx: {exc}"
         print(f"[WARN] {msg}")
@@ -252,11 +269,15 @@ def run_sqlmap(target: str, param: str = "") -> str:
         target: Full URL including query string if applicable.
         param:  POST body data string if testing POST parameters.
     """
+    duplicate = _already_called("sqlmap", target)
+    if duplicate:
+        return duplicate
     blocked = _check_hitl("sqlmap", target)
     if blocked:
         return blocked
     try:
         raw = TOOL_REGISTRY["sqlmap"]().run(target, param=param)
+        _record_tool_call("sqlmap", target)
     except RuntimeError as exc:
         msg = f"[SKIPPED] sqlmap: {exc}"
         print(f"[WARN] {msg}")
@@ -285,11 +306,15 @@ def run_xsstrike(target: str) -> str:
     """
     if "?" not in target:
         target = f"{target}?q=test"
+    duplicate = _already_called("xsstrike", target)
+    if duplicate:
+        return duplicate
     blocked = _check_hitl("xsstrike", target)
     if blocked:
         return blocked
     try:
         raw = TOOL_REGISTRY["xsstrike"]().run(target)
+        _record_tool_call("xsstrike", target)
     except RuntimeError as exc:
         msg = f"[SKIPPED] xsstrike: {exc}"
         print(f"[WARN] {msg}")
@@ -318,11 +343,15 @@ def run_dalfox(target: str) -> str:
     """
     if "?" not in target:
         target = f"{target}?q=test"
+    duplicate = _already_called("dalfox", target)
+    if duplicate:
+        return duplicate
     blocked = _check_hitl("dalfox", target)
     if blocked:
         return blocked
     try:
         raw = TOOL_REGISTRY["dalfox"]().run(target)
+        _record_tool_call("dalfox", target)
     except RuntimeError as exc:
         msg = f"[SKIPPED] dalfox: {exc}"
         print(f"[WARN] {msg}")
@@ -349,11 +378,15 @@ def run_smuggler(target: str) -> str:
     Run smuggler to test for HTTP request smuggling.
     Active in-scope test — sends malformed HTTP requests to check for smuggling. HITL-gated: call hitl_approve first.
     """
+    duplicate = _already_called("smuggler", target)
+    if duplicate:
+        return duplicate
     blocked = _check_hitl("smuggler", target)
     if blocked:
         return blocked
     try:
         raw = TOOL_REGISTRY["smuggler"]().run(target)
+        _record_tool_call("smuggler", target)
     except RuntimeError as exc:
         msg = f"[SKIPPED] smuggler: {exc}"
         print(f"[WARN] {msg}")
@@ -386,11 +419,15 @@ def run_ssrfmap(target: str, param: str = "") -> str:
                 "redirect", "file"). If omitted, the first query parameter found
                 in the URL is used.
     """
+    duplicate = _already_called("ssrfmap", target)
+    if duplicate:
+        return duplicate
     blocked = _check_hitl("ssrfmap", target)
     if blocked:
         return blocked
     try:
         raw = TOOL_REGISTRY["ssrfmap"]().run(target, param=param)
+        _record_tool_call("ssrfmap", target)
     except RuntimeError as exc:
         msg = f"[SKIPPED] ssrfmap: {exc}"
         print(f"[WARN] {msg}")
@@ -417,11 +454,15 @@ def run_tplmap(target: str) -> str:
     Run tplmap to detect and exploit Server-Side Template Injection (SSTI).
     Active in-scope test — injects template expressions to confirm SSTI. HITL-gated: call hitl_approve first.
     """
+    duplicate = _already_called("tplmap", target)
+    if duplicate:
+        return duplicate
     blocked = _check_hitl("tplmap", target)
     if blocked:
         return blocked
     try:
         raw = TOOL_REGISTRY["tplmap"]().run(target)
+        _record_tool_call("tplmap", target)
     except RuntimeError as exc:
         msg = f"[SKIPPED] tplmap: {exc}"
         print(f"[WARN] {msg}")
@@ -448,11 +489,15 @@ def run_crlfuzzer(target: str) -> str:
     Run crlfuzzer to test for CRLF injection vulnerabilities.
     Active in-scope test — injects CRLF sequences to confirm the finding. HITL-gated: call hitl_approve first.
     """
+    duplicate = _already_called("crlfuzzer", target)
+    if duplicate:
+        return duplicate
     blocked = _check_hitl("crlfuzzer", target)
     if blocked:
         return blocked
     try:
         raw = TOOL_REGISTRY["crlfuzzer"]().run(target)
+        _record_tool_call("crlfuzzer", target)
     except RuntimeError as exc:
         msg = f"[SKIPPED] crlfuzzer: {exc}"
         print(f"[WARN] {msg}")

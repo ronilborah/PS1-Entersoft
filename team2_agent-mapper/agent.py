@@ -9,6 +9,7 @@ import os
 import json
 import logging
 import operator
+import re
 from typing import Annotated, TypedDict
 from dotenv import load_dotenv
 
@@ -330,18 +331,16 @@ def _parse_synthesis_report(raw_output: object) -> tuple[str, list]:
         if not isinstance(value, str):
             break
         stripped = value.strip()
-        stripped = stripped.removeprefix("```json").removeprefix("```JSON").strip()
-        if stripped.endswith("```"):
-            stripped = stripped[:-3].rstrip()
-        starts = [index for index in (stripped.find("{"), stripped.find("[")) if index >= 0]
-        if not starts:
+        decoder = json.JSONDecoder()
+        decoded = None
+        for match in re.finditer(r"[\{\[]", stripped):
+            try:
+                decoded, _ = decoder.raw_decode(stripped[match.start():])
+                break
+            except json.JSONDecodeError:
+                continue
+        if decoded is None:
             logger.warning("Unable to find JSON object or array in synthesis output")
-            return raw_text, []
-        stripped = stripped[min(starts):].strip()
-        try:
-            decoded = json.loads(stripped)
-        except Exception as exc:
-            logger.warning("Failed to parse synthesis JSON: %s", exc)
             return raw_text, []
         if decoded == value:
             break
