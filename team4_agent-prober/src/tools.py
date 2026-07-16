@@ -46,6 +46,55 @@ def resolve_binary(binary_name: str) -> str | None:
     return shutil.which(binary_name)
 
 
+# Wordlist candidates, in priority order, per tool. These are the paths that
+# ship with SecLists / dirb / wfuzz on a typical Kali box. resolve_wordlist()
+# walks the list and returns the first file that actually exists, so a build
+# never silently hands ffuf/wfuzz a path that isn't on disk.
+_WORDLIST_CANDIDATES: dict[str, list[str]] = {
+    "ffuf": [
+        "/usr/share/wordlists/dirb/common.txt",
+        "/usr/share/seclists/Discovery/Web-Content/common.txt",
+        "/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt",
+    ],
+    "wfuzz": [
+        "/usr/share/wordlists/wfuzz/general/common.txt",
+        "/usr/share/wfuzz/wordlist/general/common.txt",
+        "/usr/share/wordlists/dirb/common.txt",
+        "/usr/share/seclists/Discovery/Web-Content/common.txt",
+    ],
+}
+
+
+def resolve_wordlist(tool_key: str, context: dict[str, Any] | None = None) -> str | None:
+    """Resolve a wordlist path for a fuzzing tool.
+
+    Priority: explicit context["wordlist"] (per-request override) ->
+    {TOOL_KEY}_WORDLIST env var (e.g. FFUF_WORDLIST, WFUZZ_WORDLIST) ->
+    first existing path in _WORDLIST_CANDIDATES[tool_key]. Returns None if
+    nothing on that list actually exists on disk — callers must treat None
+    as fatal and refuse to build a command rather than pass an empty/missing
+    path to the subprocess (which is what was producing the ffuf/wfuzz
+    "prints its own help text" symptom: the wordlist arg pointed at a file
+    that doesn't exist, so the tool bailed out to argument-parsing usage
+    output before ever fuzzing).
+    """
+    context = context or {}
+    ctx_wordlist = context.get("wordlist")
+    if ctx_wordlist and os.path.isfile(ctx_wordlist):
+        return ctx_wordlist
+
+    env_key = f"{tool_key.upper()}_WORDLIST"
+    env_path = os.environ.get(env_key)
+    if env_path and os.path.isfile(env_path):
+        return env_path
+
+    for candidate in _WORDLIST_CANDIDATES.get(tool_key, []):
+        if os.path.isfile(candidate):
+            return candidate
+
+    return None
+
+
 class ToolWrapper(ABC):
     """Base class for a single CLI tool wrapper."""
 
@@ -110,6 +159,7 @@ class ToolWrapper(ABC):
                 if self.tool_key in SLOW_TOOL_KEYS
                 else TOOL_TIMEOUT_SECONDS
             )
+            print(f"[{self.tool_key}] executing: {shlex.join(cmd)}")
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -518,7 +568,14 @@ class FfufWrapper(ToolWrapper):
         os.remove(path)  # ffuf must create it fresh
         self._last_outfile = path
 
-        wordlist = context.get("wordlist", "/usr/share/wordlists/dirb/common.txt")
+        wordlist = resolve_wordlist("ffuf", context)
+        if not wordlist and not MOCK_MODE:
+            raise ValueError(
+                "ffuf: no wordlist found — checked context['wordlist'], "
+                "FFUF_WORDLIST env var, and all built-in candidate paths "
+                "(see _WORDLIST_CANDIDATES['ffuf']). Set FFUF_WORDLIST in "
+                ".env or pass context={'wordlist': '<path>'}."
+            )
         url = target.rstrip("/") + "/FUZZ"
         return ["ffuf", "-u", url, "-w", wordlist, "-of", "json",
                 "-o", path, "-s"]
@@ -646,7 +703,14 @@ class WfuzzWrapper(ToolWrapper):
     family_id = "F4"
 
     def build_command(self, target: str, context: dict[str, Any]) -> list[str]:
-        wordlist = context.get("wordlist", "/usr/share/wordlists/common.txt")
+        wordlist = resolve_wordlist("wfuzz", context)
+        if not wordlist and not MOCK_MODE:
+            raise ValueError(
+                "wfuzz: no wordlist found — checked context['wordlist'], "
+                "WFUZZ_WORDLIST env var, and all built-in candidate paths "
+                "(see _WORDLIST_CANDIDATES['wfuzz']). Set WFUZZ_WORDLIST in "
+                ".env or pass context={'wordlist': '<path>'}."
+            )
         url = target.rstrip("/") + "/FUZZ"
         return ["wfuzz", "-c", "-z", f"file,{wordlist}", "--hc", "404", "-f", "-,json", url]
 
