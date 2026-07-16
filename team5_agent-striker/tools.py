@@ -26,8 +26,7 @@ def _script_path(folder: str, script: str) -> str:
 
 
 def _strip_ansi(text: str) -> str:
-    text = re.sub(r'\x1b\[[0-9;]*[mGKHF]', '', text)
-    return re.sub(r'\x1b\[[0-9;?]*[ -/]*[@-~]', '', text)
+    return re.sub(r'\x1b(?:[@-Z\\-_]|\[[0-9;?]*[@-~]|\][^\x07]*\x07)', '', text)
 
 
 # ── Base class ────────────────────────────────────────────────────────────────
@@ -80,8 +79,8 @@ class SqlmapTool(BaseTool):
             raise RuntimeError("sqlmap: not available in this environment — binary missing or incompatible")
         param = kwargs.get("param", "")
         args = [
-            "sqlmap", "-u", target, "--batch", "--level=3", "--risk=2",
-            "--time-sec", "5", "--timeout", "30",
+            "sqlmap", "-u", target, "--batch", "--level=1", "--risk=1",
+            "--time-sec", "5", "--timeout", "30", "--no-progress",
         ]
         if param:
             args.append(f"--data={param}")

@@ -465,9 +465,9 @@ class NmapServiceWrapper:
             "nmap",
             "-sV",                  # service/version detection
             "--top-ports", "100",   # top 100 ports (faster than full scan)
-            "-oJ", output_file,     # JSON output
             "-T4",                  # aggressive timing
-            host,                    # scan target (must not be confused with output_file)
+            "-oX", output_file,     # XML output (correct nmap flag; -oJ is not standard)
+            host,                   # scan target
         ], timeout=25)
 
         try:

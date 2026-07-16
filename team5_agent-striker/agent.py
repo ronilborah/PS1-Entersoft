@@ -71,8 +71,13 @@ def _get_state() -> dict:
     return _state_var.get()
 
 
+def _normalize_target(target: str) -> str:
+    """Strip trailing slashes and query strings for dedup key comparison only."""
+    return target.split("?")[0].rstrip("/")
+
+
 def _already_called(tool_name: str, target: str) -> str | None:
-    key = (tool_name, target)
+    key = (tool_name, _normalize_target(target))
     if key in _get_state()["tools_called"]:
         message = f"already called {tool_name} on {target} this run"
         print(f"[INFO] {message}")
@@ -81,7 +86,7 @@ def _already_called(tool_name: str, target: str) -> str | None:
 
 
 def _record_tool_call(tool_name: str, target: str) -> None:
-    _get_state()["tools_called"].add((tool_name, target))
+    _get_state()["tools_called"].add((tool_name, _normalize_target(target)))
 
 
 def _log_action(
@@ -269,6 +274,10 @@ def run_sqlmap(target: str, param: str = "") -> str:
         target: Full URL including query string if applicable.
         param:  POST body data string if testing POST parameters.
     """
+    if "?" not in target:
+        msg = f"sqlmap skipped — no parameters in URL: {target}"
+        print(f"[INFO] {msg}")
+        return msg
     duplicate = _already_called("sqlmap", target)
     if duplicate:
         return duplicate

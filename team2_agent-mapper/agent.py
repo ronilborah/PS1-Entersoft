@@ -324,27 +324,28 @@ def synthesize_node(state: AgentState) -> dict:
 
 
 def _parse_synthesis_report(raw_output: object) -> tuple[str, list]:
-    """Parse JSON report output, including repeatedly encoded model responses."""
+    """Parse JSON report output, including prose-wrapped LLM responses."""
     raw_text = str(raw_output)
-    value: object = raw_output if not isinstance(raw_output, str) else raw_text
-    for _ in range(3):
-        if not isinstance(value, str):
-            break
-        stripped = value.strip()
-        decoder = json.JSONDecoder()
-        decoded = None
-        for match in re.finditer(r"[\{\[]", stripped):
+    value = None
+
+    # Fast path: clean JSON
+    try:
+        value = json.loads(raw_text.strip())
+    except json.JSONDecodeError:
+        pass
+
+    # Fallback: find first JSON block anywhere in prose
+    if value is None:
+        m = re.search(r'(\{[\s\S]*\}|\[[\s\S]*\])', raw_text)
+        if m:
             try:
-                decoded, _ = decoder.raw_decode(stripped[match.start():])
-                break
+                value = json.loads(m.group(1))
             except json.JSONDecodeError:
-                continue
-        if decoded is None:
-            logger.warning("Unable to find JSON object or array in synthesis output")
-            return raw_text, []
-        if decoded == value:
-            break
-        value = decoded
+                pass
+
+    if value is None:
+        logger.warning("Unable to find JSON object or array in synthesis output: %s", raw_text[:200])
+        return "", []
 
     if not isinstance(value, dict):
         return str(value), []

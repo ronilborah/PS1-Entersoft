@@ -79,7 +79,7 @@ def _call_agent(agent_id: str, base_url: str, target: str, intent: str, context:
         return _skipped(agent_id, "downstream agent returned no response object")
     # Truncated to prevent LLM context overflow
     agent_response = dict(agent_response)
-    agent_response["summary"] = str(agent_response.get("summary", ""))[:1000]
+    agent_response["summary"] = str(agent_response.get("summary", ""))[:800]
     findings = agent_response.get("findings", [])
     agent_response["findings"] = findings[:5] if isinstance(findings, list) else []
     return json.dumps(agent_response)

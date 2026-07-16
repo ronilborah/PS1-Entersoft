@@ -31,6 +31,21 @@ SLOW_TOOL_KEYS = {"nuclei", "nuclei_active", "nikto", "ffuf", "wfuzz", "testssl"
 TARGET_URL_PATTERN = re.compile(r"^https?://[a-zA-Z0-9][a-zA-Z0-9\-\.]*\.[a-zA-Z]{2,}")
 
 
+def resolve_binary(binary_name: str) -> str | None:
+    """Resolve a CLI binary to its absolute path.
+
+    Checks {BINARY_NAME}_BINARY env var first (e.g. HTTPX_BINARY, NUCLEI_BINARY,
+    FFUF_BINARY, WFUZZ_BINARY, NIKTO_BINARY, KXSS_BINARY, CORSY_BINARY,
+    WPSCAN_BINARY, DROOPESCAN_BINARY, TESTSSL_BINARY), then falls back to
+    shutil.which(). Returns None only if both methods fail.
+    """
+    env_key = f"{binary_name.upper()}_BINARY"
+    env_path = os.environ.get(env_key)
+    if env_path and os.path.isfile(env_path):
+        return env_path
+    return shutil.which(binary_name)
+
+
 class ToolWrapper(ABC):
     """Base class for a single CLI tool wrapper."""
 
@@ -78,14 +93,11 @@ class ToolWrapper(ABC):
         context = context or {}
         cmd = self.build_command(target, context)
         binary = cmd[0]
-
-        binary_override_name = getattr(self, "env_binary_override", None)
-        binary_override = os.environ.get(binary_override_name) if binary_override_name else None
-        if binary_override:
-            binary = binary_override
-            binary_available = os.path.isfile(binary)
-        else:
-            binary_available = shutil.which(binary) is not None
+        resolved = resolve_binary(os.path.basename(binary))
+        binary_available = resolved is not None
+        if resolved:
+            cmd[0] = resolved
+            binary = resolved
 
         if MOCK_MODE or not binary_available:
             result = self.mock_output(target, context)
