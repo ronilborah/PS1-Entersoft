@@ -7,6 +7,7 @@ Uses ChatOllama (native Ollama client) with Ollama Cloud support.
 
 import os
 import json
+import logging
 import operator
 from typing import Annotated, TypedDict
 from dotenv import load_dotenv
@@ -17,6 +18,8 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 
 from tools import TOOL_REGISTRY
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -321,17 +324,25 @@ def synthesize_node(state: AgentState) -> dict:
 
 def _parse_synthesis_report(raw_output: object) -> tuple[str, list]:
     """Parse JSON report output, including repeatedly encoded model responses."""
-    value = raw_output
+    raw_text = str(raw_output)
+    value: object = raw_output if not isinstance(raw_output, str) else raw_text
     for _ in range(3):
         if not isinstance(value, str):
             break
         stripped = value.strip()
-        if not stripped.startswith(("{", "[", '"')):
-            break
+        stripped = stripped.removeprefix("```json").removeprefix("```JSON").strip()
+        if stripped.endswith("```"):
+            stripped = stripped[:-3].rstrip()
+        starts = [index for index in (stripped.find("{"), stripped.find("[")) if index >= 0]
+        if not starts:
+            logger.warning("Unable to find JSON object or array in synthesis output")
+            return raw_text, []
+        stripped = stripped[min(starts):].strip()
         try:
             decoded = json.loads(stripped)
-        except json.JSONDecodeError:
-            break
+        except Exception as exc:
+            logger.warning("Failed to parse synthesis JSON: %s", exc)
+            return raw_text, []
         if decoded == value:
             break
         value = decoded
@@ -340,13 +351,21 @@ def _parse_synthesis_report(raw_output: object) -> tuple[str, list]:
         return str(value), []
 
     summary = value.get("summary", "")
-    if isinstance(summary, str) and summary.strip().startswith("{"):
-        try:
-            inner = json.loads(summary.strip())
+    if isinstance(summary, str):
+        inner_text = summary.strip()
+        inner_text = inner_text.removeprefix("```json").removeprefix("```JSON").strip()
+        if inner_text.endswith("```"):
+            inner_text = inner_text[:-3].rstrip()
+        starts = [index for index in (inner_text.find("{"), inner_text.find("[")) if index >= 0]
+        if starts:
+            inner_text = inner_text[min(starts):].strip()
+            try:
+                inner = json.loads(inner_text)
+            except Exception as exc:
+                logger.warning("Failed to parse nested synthesis JSON: %s", exc)
+                return raw_text, []
             if isinstance(inner, dict):
                 value = inner
-        except json.JSONDecodeError:
-            pass
 
     findings = value.get("findings", [])
     if not isinstance(findings, list):

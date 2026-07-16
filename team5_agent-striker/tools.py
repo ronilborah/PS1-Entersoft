@@ -135,8 +135,8 @@ class DalfoxTool(BaseTool):
         if shutil.which("dalfox") is None:
             raise RuntimeError("dalfox: not available in this environment — binary missing or incompatible")
         result = subprocess.run(
-            ["dalfox", "url", target],
-            capture_output=True, text=True, stdin=subprocess.DEVNULL, start_new_session=True, timeout=120
+            ["dalfox", "url", target, "--timeout", "30"],
+            capture_output=True, text=True, stdin=subprocess.DEVNULL, start_new_session=True, timeout=60
         )
         return _strip_ansi(result.stdout or result.stderr)
 

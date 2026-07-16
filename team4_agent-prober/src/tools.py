@@ -78,7 +78,13 @@ class ToolWrapper(ABC):
         cmd = self.build_command(target, context)
         binary = cmd[0]
 
-        if MOCK_MODE or shutil.which(binary) is None:
+        if isinstance(self, HttpxWrapper):
+            binary = os.environ.get("HTTPX_BINARY", "httpx")
+            binary_available = os.path.isfile(binary)
+        else:
+            binary_available = shutil.which(binary) is not None
+
+        if MOCK_MODE or not binary_available:
             result = self.mock_output(target, context)
             result["mock"] = True
             return result

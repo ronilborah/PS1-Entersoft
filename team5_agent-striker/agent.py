@@ -283,6 +283,8 @@ def run_xsstrike(target: str) -> str:
     Run xsstrike to find and validate XSS vulnerabilities.
     Active in-scope test — injects XSS payloads to confirm the finding. HITL-gated: call hitl_approve first.
     """
+    if "?" not in target:
+        target = f"{target}?q=test"
     blocked = _check_hitl("xsstrike", target)
     if blocked:
         return blocked
@@ -314,6 +316,8 @@ def run_dalfox(target: str) -> str:
     Run dalfox for deep XSS parameter scanning and payload generation.
     Active in-scope test — injects payloads for deep XSS confirmation. HITL-gated: call hitl_approve first.
     """
+    if "?" not in target:
+        target = f"{target}?q=test"
     blocked = _check_hitl("dalfox", target)
     if blocked:
         return blocked
