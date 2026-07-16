@@ -107,16 +107,42 @@ def call_prober(target: str, intent: str, context: str = "{}") -> str:
     target_error = _target_validation_error(target)
     if target_error:
         return target_error
-    return _call_agent("agent-prober", os.getenv("PROBER_URL", "http://localhost:8004"), target, intent, context)
+    result = _call_agent("agent-prober", os.getenv("PROBER_URL", "http://localhost:8004"), target, intent, context)
+    try:
+        parsed = json.loads(result)
+    except json.JSONDecodeError:
+        return result
+    if isinstance(parsed, dict):
+        parsed["specific_endpoints"] = parsed.get("specific_endpoints", [])
+        return json.dumps(parsed)
+    return result
 
 
 @tool
-def call_striker(target: str, intent: str, context: str = "{}") -> str:
+def call_striker(
+    target: str,
+    intent: str,
+    context: str = "{}",
+    specific_endpoints: list[str] = [],
+) -> str:
     """Call the Striker agent to perform the final authorized exploitation or impact assessment stage."""
     target_error = _target_validation_error(target)
     if target_error:
         return target_error
-    return _call_agent("agent-striker", os.getenv("STRIKER_URL", "http://localhost:8005"), target, intent, context)
+    try:
+        context_payload = json.loads(context) if context else {}
+    except json.JSONDecodeError:
+        context_payload = {}
+    if not isinstance(context_payload, dict):
+        context_payload = {}
+    context_payload["specific_endpoints"] = specific_endpoints
+    return _call_agent(
+        "agent-striker",
+        os.getenv("STRIKER_URL", "http://localhost:8005"),
+        target,
+        intent,
+        json.dumps(context_payload),
+    )
 
 
 # Keep the pipeline registration in this file. Adding a specialist only requires
