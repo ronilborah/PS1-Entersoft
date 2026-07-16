@@ -131,6 +131,38 @@ def _save_tool_output(tool: str, target: str, raw_output: str, parsed_findings: 
     return str(path)
 
 
+def _resolve_specific_endpoints(context: dict, target: str) -> list[str]:
+    """Resolve the endpoints the Striker is allowed to test."""
+    explicit = context.get("specific_endpoints") if isinstance(context, dict) else None
+    if isinstance(explicit, str):
+        explicit = [explicit]
+    if isinstance(explicit, list):
+        endpoints = [item for item in explicit if isinstance(item, str) and item.strip()]
+        if endpoints:
+            return list(dict.fromkeys(endpoints))
+
+    nuclei_endpoints: list[str] = []
+    ffuf_endpoints: list[str] = []
+
+    def collect(value: Any) -> None:
+        if isinstance(value, dict):
+            source_tool = value.get("source_tool")
+            if source_tool == "run_nuclei_active" and isinstance(value.get("matched_at"), str):
+                nuclei_endpoints.append(value["matched_at"])
+            elif source_tool == "run_ffuf" and isinstance(value.get("url"), str):
+                ffuf_endpoints.append(value["url"])
+            for nested in value.values():
+                collect(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                collect(nested)
+
+    collect(context)
+    resolved = nuclei_endpoints + ffuf_endpoints
+    resolved = [endpoint for endpoint in resolved if endpoint.strip()]
+    return list(dict.fromkeys(resolved)) or [target]
+
+
 # ── HITL gate ─────────────────────────────────────────────────────────────────
 
 MOCK_HITL: bool = os.getenv("TOOL_MOCK_MODE", "true").lower() == "true"
@@ -472,6 +504,8 @@ def run_react_agent(prompt: str, target: str, context: dict) -> dict:
     agent = create_react_agent(llm, TOOLS)
 
     context_summary = json.dumps(context, indent=2) if context else "No upstream context provided."
+    specific_endpoints = _resolve_specific_endpoints(context, target)
+    endpoints_summary = json.dumps(specific_endpoints, indent=2)
 
     full_prompt = f"""You are agent-striker, the exploit-validation stage of an authorized,
 pre-approved penetration-testing engagement (the Obsidia pipeline). The target below is
@@ -485,6 +519,9 @@ Target (in-scope for this engagement): {target}
 
 Context from upstream Prober agent:
 {context_summary}
+
+Endpoints resolved for testing (use only these endpoints):
+{endpoints_summary}
 
 YOUR RULES (follow strictly):
 1. Always run run_httpx first to confirm the target is live. This is a passive check and
