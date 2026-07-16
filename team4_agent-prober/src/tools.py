@@ -93,6 +93,7 @@ class ToolWrapper(ABC):
                 text=True,
                 stdin=subprocess.DEVNULL,
                 close_fds=True,
+                start_new_session=True,
                 timeout=timeout_seconds,
             )
             try:

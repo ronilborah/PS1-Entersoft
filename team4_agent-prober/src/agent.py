@@ -360,6 +360,15 @@ def run_react_agent(prompt: str, target: str, context: dict[str, Any]) -> dict[s
         if intent_log and intent_log[-1]["fulfilled"] is None:
             intent_log[-1]["fulfilled"] = True
 
+        specific_endpoints = [
+            entry.get("url")
+            for entry in findings
+            if (
+                entry.get("source_tool") == "run_ffuf"
+                and entry.get("status") in (200, 301, 302, 403)
+            )
+        ]
+
         return {
             "agent_id": "agent-prober",
             "status": "completed",
@@ -374,6 +383,7 @@ def run_react_agent(prompt: str, target: str, context: dict[str, Any]) -> dict[s
                         "details": findings,
                     }
                 ],
+                "specific_endpoints": specific_endpoints,
             },
         }
 
