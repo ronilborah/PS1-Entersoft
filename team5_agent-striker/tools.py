@@ -26,7 +26,7 @@ def _script_path(folder: str, script: str) -> str:
 
 
 def _strip_ansi(text: str) -> str:
-    return re.sub(r'\x1b(?:[@-Z\\-_]|\[[0-9;?]*[@-~]|\][^\x07]*\x07)', '', text)
+    return re.sub(r'\x1b\[[0-9;]*m', '', text)
 
 
 # ── Base class ────────────────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ class HttpxTool(BaseTool):
             raise RuntimeError("httpx-toolkit: not available in this environment — binary missing or incompatible")
         result = subprocess.run(
             ["httpx-toolkit", "-u", target, "-json", "-tech-detect", "-title", "-status-code"],
-            capture_output=True, text=True, stdin=subprocess.DEVNULL, start_new_session=True, timeout=60
+            capture_output=True, text=True, timeout=60
         )
         return _strip_ansi(result.stdout or result.stderr)
 
@@ -78,15 +78,29 @@ class SqlmapTool(BaseTool):
         if shutil.which("sqlmap") is None:
             raise RuntimeError("sqlmap: not available in this environment — binary missing or incompatible")
         param = kwargs.get("param", "")
+
+        # Skip guard: no query string and no explicit POST data means there's
+        # no known injectable surface to test. --forms will still catch any
+        # forms sqlmap discovers by crawling, but if the URL is bare and no
+        # data was supplied, a full scan is very unlikely to find anything
+        # and just burns the timeout budget. Bail out immediately instead.
+        if "?" not in target and not param:
+            return "sqlmap skipped — no injectable parameters found in URL"
+
         args = [
-            "sqlmap", "-u", target, "--batch", "--level=1", "--risk=1",
-            "--time-sec", "5", "--timeout", "30", "--no-progress",
+            "sqlmap", "-u", target, "--batch",
+            "--level=1", "--risk=1",
+            "--technique=B",     # boolean-based blind only — fastest technique, avoids the full detection sweep
+            "--forms",           # auto-detect form parameters instead of requiring them to be passed manually
+            "--time-sec=5",
+            "--timeout=30",
+            "--no-progress",
         ]
         if param:
             args.append(f"--data={param}")
         result = subprocess.run(
             args,
-            capture_output=True, text=True, stdin=subprocess.DEVNULL, start_new_session=True, timeout=360
+            capture_output=True, text=True, timeout=60
         )
         return _strip_ansi(result.stdout or result.stderr)
 
@@ -111,7 +125,7 @@ class XsstrikeTool(BaseTool):
             raise RuntimeError("xsstrike: not available in this environment — binary missing or incompatible")
         result = subprocess.run(
             ["python3", script, "-u", target, "--skip-dom"],
-            capture_output=True, text=True, stdin=subprocess.DEVNULL, start_new_session=True, timeout=120
+            capture_output=True, text=True, timeout=120
         )
         return _strip_ansi(result.stdout or result.stderr)
 
@@ -138,8 +152,8 @@ class DalfoxTool(BaseTool):
         if shutil.which("dalfox") is None:
             raise RuntimeError("dalfox: not available in this environment — binary missing or incompatible")
         result = subprocess.run(
-            ["dalfox", "url", target, "--timeout", "30"],
-            capture_output=True, text=True, stdin=subprocess.DEVNULL, start_new_session=True, timeout=60
+            ["dalfox", "url", target],
+            capture_output=True, text=True, timeout=120
         )
         return _strip_ansi(result.stdout or result.stderr)
 
@@ -164,7 +178,7 @@ class SmugglerTool(BaseTool):
             raise RuntimeError("smuggler: not available in this environment — binary missing or incompatible")
         result = subprocess.run(
             ["python3", script, "-u", target],
-            capture_output=True, text=True, stdin=subprocess.DEVNULL, start_new_session=True, timeout=120
+            capture_output=True, text=True, timeout=120
         )
         return _strip_ansi(result.stdout or result.stderr)
 
@@ -209,7 +223,7 @@ class SsrfmapTool(BaseTool):
             tmp.close()
             result = subprocess.run(
                 ["python3", script, "-r", tmp.name, "-p", param, "-m", "readfiles,portscan"],
-                capture_output=True, text=True, stdin=subprocess.DEVNULL, start_new_session=True, timeout=120
+                capture_output=True, text=True, timeout=120
             )
             return _strip_ansi(result.stdout or result.stderr)
         finally:
@@ -240,7 +254,7 @@ class TplmapTool(BaseTool):
             raise RuntimeError("tplmap: not available in this environment — binary missing or incompatible")
         result = subprocess.run(
             ["python3", script, "-u", target, "-s"],
-            capture_output=True, text=True, stdin=subprocess.DEVNULL, start_new_session=True, timeout=120
+            capture_output=True, text=True, timeout=120
         )
         return _strip_ansi(result.stdout or result.stderr)
 
@@ -266,7 +280,7 @@ class CrlfuzzerTool(BaseTool):
             raise RuntimeError("crlfuzzer: not available in this environment — binary missing or incompatible")
         result = subprocess.run(
             ["crlfuzz", "-u", target],
-            capture_output=True, text=True, stdin=subprocess.DEVNULL, start_new_session=True, timeout=60
+            capture_output=True, text=True, timeout=60
         )
         return _strip_ansi(result.stdout or result.stderr)
 
