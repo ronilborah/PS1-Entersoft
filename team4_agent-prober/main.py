@@ -25,7 +25,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'src')))
 from fastapi import FastAPI, HTTPException
 
 from models import HealthResponse, TaskRequest, TaskResponse, TaskResponseBody
-from tools import MOCK_MODE, PROBER_ALLOWLIST, get_tool
+from tools import _is_mock_mode, PROBER_ALLOWLIST, get_tool
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("agent-prober")
@@ -41,7 +41,7 @@ def health() -> HealthResponse:
     return HealthResponse(
         agent_id=AGENT_ID,
         status="ok",
-        mock_mode=MOCK_MODE,
+        mock_mode=_is_mock_mode(),
         tool_allowlist=PROBER_ALLOWLIST,
     )
 

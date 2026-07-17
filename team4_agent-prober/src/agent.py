@@ -73,7 +73,7 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
-from tools import MOCK_MODE, get_tool
+from tools import _is_mock_mode, get_tool
 
 logger = logging.getLogger("agent-prober")
 

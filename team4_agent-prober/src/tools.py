@@ -24,11 +24,26 @@ import subprocess
 from abc import ABC, abstractmethod
 from typing import Any
 
-MOCK_MODE = os.environ.get("TOOL_MOCK_MODE", "true").lower() == "true"
+from dotenv import load_dotenv
+
+load_dotenv()
+
 TOOL_TIMEOUT_SECONDS = min(int(os.environ.get("TOOL_TIMEOUT_SECONDS", "25")), 25)
 SLOW_TOOL_TIMEOUT_SECONDS = 45
 SLOW_TOOL_KEYS = {"nuclei", "nuclei_active", "nikto", "ffuf", "wfuzz", "testssl", "testssl_deep"}
 TARGET_URL_PATTERN = re.compile(r"^https?://[a-zA-Z0-9][a-zA-Z0-9\-\.]*\.[a-zA-Z]{2,}")
+
+
+def _is_mock_mode() -> bool:
+    """Whether tools should return canned output instead of shelling out.
+
+    Deliberately a function, not a module-level constant — evaluating this
+    once at import time (as the old `MOCK_MODE = ...` constant did) risks
+    reading a stale/default value if anything reads it before .env is
+    loaded, and it can never reflect a later env var change (e.g. in tests
+    that monkeypatch os.environ).
+    """
+    return os.environ.get("TOOL_MOCK_MODE", "true").lower() == "true"
 
 
 def resolve_binary(binary_name: str) -> str | None:
@@ -148,7 +163,7 @@ class ToolWrapper(ABC):
             cmd[0] = resolved
             binary = resolved
 
-        if MOCK_MODE or not binary_available:
+        if _is_mock_mode() or not binary_available:
             result = self.mock_output(target, context)
             result["mock"] = True
             return result
@@ -569,7 +584,7 @@ class FfufWrapper(ToolWrapper):
         self._last_outfile = path
 
         wordlist = resolve_wordlist("ffuf", context)
-        if not wordlist and not MOCK_MODE:
+        if not wordlist and not _is_mock_mode():
             raise ValueError(
                 "ffuf: no wordlist found — checked context['wordlist'], "
                 "FFUF_WORDLIST env var, and all built-in candidate paths "
@@ -704,7 +719,7 @@ class WfuzzWrapper(ToolWrapper):
 
     def build_command(self, target: str, context: dict[str, Any]) -> list[str]:
         wordlist = resolve_wordlist("wfuzz", context)
-        if not wordlist and not MOCK_MODE:
+        if not wordlist and not _is_mock_mode():
             raise ValueError(
                 "wfuzz: no wordlist found — checked context['wordlist'], "
                 "WFUZZ_WORDLIST env var, and all built-in candidate paths "
