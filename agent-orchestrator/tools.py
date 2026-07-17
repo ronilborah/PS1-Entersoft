@@ -85,13 +85,28 @@ def _call_agent(agent_id: str, base_url: str, target: str, intent: str, context:
     return json.dumps(agent_response)
 
 
+def _truncate_result(result: str) -> str:
+    """Truncate public tool results to prevent Ollama context overflow."""
+    try:
+        parsed = json.loads(result)
+    except json.JSONDecodeError:
+        return result
+    if isinstance(parsed, dict):
+        if "summary" in parsed and isinstance(parsed["summary"], str):
+            parsed["summary"] = parsed["summary"][:800]
+        if "findings" in parsed and isinstance(parsed["findings"], list):
+            parsed["findings"] = parsed["findings"][:5]
+    return json.dumps(parsed)
+
+
 @tool
 def call_scout(target: str, intent: str, context: str = "{}") -> str:
     """Call the Scout agent to fingerprint a target: tech stack, WAF, TLS, open ports."""
     target_error = _target_validation_error(target)
     if target_error:
         return target_error
-    return _call_agent("agent-scout", os.getenv("SCOUT_URL", "http://localhost:8001"), target, intent, context)
+    result = _call_agent("agent-scout", os.getenv("SCOUT_URL", "http://localhost:8001"), target, intent, context)
+    return _truncate_result(result)
 
 
 @tool
@@ -100,7 +115,8 @@ def call_mapper(target: str, intent: str, context: str = "{}") -> str:
     target_error = _target_validation_error(target)
     if target_error:
         return target_error
-    return _call_agent("agent-mapper", os.getenv("MAPPER_URL", "http://localhost:8002"), target, intent, context)
+    result = _call_agent("agent-mapper", os.getenv("MAPPER_URL", "http://localhost:8002"), target, intent, context)
+    return _truncate_result(result)
 
 
 @tool
@@ -109,7 +125,8 @@ def call_analyst(target: str, intent: str, context: str = "{}") -> str:
     target_error = _target_validation_error(target)
     if target_error:
         return target_error
-    return _call_agent("agent-analyst", os.getenv("ANALYST_URL", "http://localhost:8003"), target, intent, context)
+    result = _call_agent("agent-analyst", os.getenv("ANALYST_URL", "http://localhost:8003"), target, intent, context)
+    return _truncate_result(result)
 
 
 @tool
@@ -125,7 +142,7 @@ def call_prober(target: str, intent: str, context: str = "{}") -> str:
         return result
     if isinstance(parsed, dict):
         parsed["specific_endpoints"] = parsed.get("specific_endpoints", [])
-        return json.dumps(parsed)
+        return _truncate_result(json.dumps(parsed))
     return result
 
 
@@ -147,13 +164,14 @@ def call_striker(
     if not isinstance(context_payload, dict):
         context_payload = {}
     context_payload["specific_endpoints"] = specific_endpoints
-    return _call_agent(
+    result = _call_agent(
         "agent-striker",
         os.getenv("STRIKER_URL", "http://localhost:8005"),
         target,
         intent,
         json.dumps(context_payload),
     )
+    return _truncate_result(result)
 
 
 # Keep the pipeline registration in this file. Adding a specialist only requires
