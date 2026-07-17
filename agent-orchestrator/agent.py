@@ -9,7 +9,13 @@ from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
-from tools import PIPELINE_AGENTS, TOOLS, TOOL_TO_AGENT
+from tools import (
+    PIPELINE_AGENTS,
+    TOOLS,
+    TOOL_TO_AGENT,
+    reset_original_target,
+    set_original_target,
+)
 
 load_dotenv()
 
@@ -96,10 +102,14 @@ async def run_orchestrator(prompt: str, target: str) -> dict:
         tools=TOOLS,
         prompt=SYSTEM_PROMPT,
     )
-    result = await graph.ainvoke(
-        {"messages": [HumanMessage(content=f"Target: {target}\nObjective: {prompt}")]},
-        config={"recursion_limit": 30},
-    )
+    target_token = set_original_target(target)
+    try:
+        result = await graph.ainvoke(
+            {"messages": [HumanMessage(content=f"Target: {target}\nObjective: {prompt}")]},
+            config={"recursion_limit": 30},
+        )
+    finally:
+        reset_original_target(target_token)
 
     pipeline_results: dict[str, dict[str, Any]] = {}
     for message in result.get("messages", []):

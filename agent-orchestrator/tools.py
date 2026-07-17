@@ -3,7 +3,9 @@
 import json
 import logging
 import os
+import re
 import time
+from contextvars import ContextVar
 from typing import Any
 
 import requests
@@ -15,18 +17,51 @@ TIMEOUT_SECONDS = 400
 logger = logging.getLogger(__name__)
 
 TARGET_TRUNCATED_MESSAGE = "Target URL was truncated by LLM. The orchestrator must retry with the full original target URL."
+_VALID_TARGET = re.compile(r"^https?://[a-zA-Z0-9][a-zA-Z0-9\-\.]*\.[a-zA-Z]{2,}")
+_ORIGINAL_TARGET: ContextVar[str | None] = ContextVar("original_target", default=None)
+
+
+def set_original_target(target: str):
+    """Make the request body's target available to tools during one run."""
+    return _ORIGINAL_TARGET.set(target)
+
+
+def reset_original_target(token) -> None:
+    """Clear the request target after the graph finishes."""
+    _ORIGINAL_TARGET.reset(token)
+
+
+def _valid_target(target: Any) -> bool:
+    if not isinstance(target, str):
+        return False
+    normalized = target.strip()
+    return bool(_VALID_TARGET.match(normalized)) and not normalized.endswith("..") and "..." not in normalized
+
+
+def _resolved_target(target: str) -> str | None:
+    """Use the original request target when the LLM supplied a truncated one."""
+    if _valid_target(target):
+        return target
+    original_target = _ORIGINAL_TARGET.get()
+    if _valid_target(original_target):
+        logger.warning("Invalid target URL '%s' from LLM; using original request target", target)
+        return original_target
+    return None
+
+
+def _invalid_target_result(target: Any) -> str:
+    logger.warning("Invalid target URL '%s' from LLM; skipping", target)
+    return json.dumps(
+        {
+            "error": f"Invalid target URL '{target}' from LLM — skipping",
+            "skipped": True,
+        }
+    )
 
 
 def _target_validation_error(target: Any) -> str | None:
     """Return the standard error for an invalid or truncated target URL."""
-    if (
-        not isinstance(target, str)
-        or not target.strip()
-        or "…" in target
-        or "..." in target
-        or len(target.strip()) < 10
-        or not target.strip().startswith(("http://", "https://"))
-    ):
+    if not _valid_target(target):
         return json.dumps(
             {
                 "error": "target_truncated",
@@ -102,9 +137,10 @@ def _truncate_result(result: str) -> str:
 @tool
 def call_scout(target: str, intent: str, context: str = "{}") -> str:
     """Call the Scout agent to fingerprint a target: tech stack, WAF, TLS, open ports."""
-    target_error = _target_validation_error(target)
-    if target_error:
-        return target_error
+    requested_target = target
+    target = _resolved_target(target)
+    if target is None:
+        return _invalid_target_result(requested_target)
     result = _call_agent("agent-scout", os.getenv("SCOUT_URL", "http://localhost:8001"), target, intent, context)
     return _truncate_result(result)
 
@@ -112,9 +148,10 @@ def call_scout(target: str, intent: str, context: str = "{}") -> str:
 @tool
 def call_mapper(target: str, intent: str, context: str = "{}") -> str:
     """Call the Mapper agent to enumerate the target's routes, APIs, parameters, and attack surface."""
-    target_error = _target_validation_error(target)
-    if target_error:
-        return target_error
+    requested_target = target
+    target = _resolved_target(target)
+    if target is None:
+        return _invalid_target_result(requested_target)
     result = _call_agent("agent-mapper", os.getenv("MAPPER_URL", "http://localhost:8002"), target, intent, context)
     return _truncate_result(result)
 
@@ -122,9 +159,10 @@ def call_mapper(target: str, intent: str, context: str = "{}") -> str:
 @tool
 def call_analyst(target: str, intent: str, context: str = "{}") -> str:
     """Call the Analyst agent to prioritize and assess potential security findings."""
-    target_error = _target_validation_error(target)
-    if target_error:
-        return target_error
+    requested_target = target
+    target = _resolved_target(target)
+    if target is None:
+        return _invalid_target_result(requested_target)
     result = _call_agent("agent-analyst", os.getenv("ANALYST_URL", "http://localhost:8003"), target, intent, context)
     return _truncate_result(result)
 
@@ -132,9 +170,10 @@ def call_analyst(target: str, intent: str, context: str = "{}") -> str:
 @tool
 def call_prober(target: str, intent: str, context: str = "{}") -> str:
     """Call the Prober agent to safely validate promising findings and collect evidence."""
-    target_error = _target_validation_error(target)
-    if target_error:
-        return target_error
+    requested_target = target
+    target = _resolved_target(target)
+    if target is None:
+        return _invalid_target_result(requested_target)
     result = _call_agent("agent-prober", os.getenv("PROBER_URL", "http://localhost:8004"), target, intent, context)
     try:
         parsed = json.loads(result)
@@ -154,9 +193,10 @@ def call_striker(
     specific_endpoints: list[str] = [],
 ) -> str:
     """Call the Striker agent to perform the final authorized exploitation or impact assessment stage."""
-    target_error = _target_validation_error(target)
-    if target_error:
-        return target_error
+    requested_target = target
+    target = _resolved_target(target)
+    if target is None:
+        return _invalid_target_result(requested_target)
     try:
         context_payload = json.loads(context) if context else {}
     except json.JSONDecodeError:
