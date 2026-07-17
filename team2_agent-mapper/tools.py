@@ -461,18 +461,30 @@ class NmapServiceWrapper:
         host = extract_hostname(target)
         output_file = "/tmp/nmap_output.json"
 
-        stdout, stderr, code = run_command([
+        nmap_cmd = [
             "nmap",
             "-sV",                  # service/version detection
             "--top-ports", "100",   # top 100 ports (faster than full scan)
             "-T4",                  # aggressive timing
             "-oX", output_file,     # XML output (correct nmap flag; -oJ is not standard)
             host,                   # scan target
-        ], timeout=25)
+        ]
+        print(f"Running nmap command: {' '.join(nmap_cmd)}")
+        stdout, stderr, code = run_command(nmap_cmd, timeout=25)
 
         try:
+            if not os.path.exists(output_file) or os.path.getsize(output_file) == 0:
+                return {"services": {}, "error": "nmap produced no output"}
             with open(output_file, "r") as f:
-                data = json.load(f)
+                output_content = f.read()
+        except FileNotFoundError:
+            return {"services": {}, "error": "nmap produced no output"}
+        if not output_content:
+            return {"services": {}, "error": "nmap produced no output"}
+        print(f"nmap output first 200 chars: {output_content[:200]!r}")
+
+        try:
+            data = json.loads(output_content)
 
             services = {}
             hosts = data.get("nmaprun", {}).get("host", [])

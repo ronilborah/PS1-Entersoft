@@ -176,10 +176,13 @@ class SmugglerTool(BaseTool):
         script = _script_path("smuggler", "smuggler.py")
         if not os.path.exists(script):
             raise RuntimeError("smuggler: not available in this environment — binary missing or incompatible")
-        result = subprocess.run(
-            ["python3", script, "-u", target],
-            capture_output=True, text=True, timeout=120
-        )
+        try:
+            result = subprocess.run(
+                ["python3", script, "-u", target],
+                capture_output=True, text=True, timeout=60
+            )
+        except subprocess.TimeoutExpired:
+            return {"error": "smuggler timed out after 60s", "skipped": True}
         return _strip_ansi(result.stdout or result.stderr)
 
 
@@ -221,10 +224,13 @@ class SsrfmapTool(BaseTool):
         try:
             tmp.write(raw_request)
             tmp.close()
-            result = subprocess.run(
-                ["python3", script, "-r", tmp.name, "-p", param, "-m", "readfiles,portscan"],
-                capture_output=True, text=True, timeout=120
-            )
+            try:
+                result = subprocess.run(
+                    ["python3", script, "-r", tmp.name, "-p", param, "-m", "readfiles,portscan"],
+                    capture_output=True, text=True, timeout=60
+                )
+            except subprocess.TimeoutExpired:
+                return {"error": "ssrfmap timed out after 60s", "skipped": True}
             return _strip_ansi(result.stdout or result.stderr)
         finally:
             os.unlink(tmp.name)
@@ -252,10 +258,13 @@ class TplmapTool(BaseTool):
         script = _script_path("SSTImap", "sstimap.py")
         if not os.path.exists(script):
             raise RuntimeError("tplmap: not available in this environment — binary missing or incompatible")
-        result = subprocess.run(
-            ["python3", script, "-u", target, "-s"],
-            capture_output=True, text=True, timeout=120
-        )
+        try:
+            result = subprocess.run(
+                ["python3", script, "-u", target, "-s"],
+                capture_output=True, text=True, timeout=60
+            )
+        except subprocess.TimeoutExpired:
+            return {"error": "tplmap timed out after 60s", "skipped": True}
         return _strip_ansi(result.stdout or result.stderr)
 
 
@@ -278,10 +287,13 @@ class CrlfuzzerTool(BaseTool):
             })
         if shutil.which("crlfuzz") is None:
             raise RuntimeError("crlfuzzer: not available in this environment — binary missing or incompatible")
-        result = subprocess.run(
-            ["crlfuzz", "-u", target],
-            capture_output=True, text=True, timeout=60
-        )
+        try:
+            result = subprocess.run(
+                ["crlfuzz", "-u", target],
+                capture_output=True, text=True, timeout=60
+            )
+        except subprocess.TimeoutExpired:
+            return {"error": "crlfuzzer timed out after 60s", "skipped": True}
         return _strip_ansi(result.stdout or result.stderr)
 
 
